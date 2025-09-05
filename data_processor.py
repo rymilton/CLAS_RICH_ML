@@ -116,99 +116,140 @@ def match_to_truth(event_data):
     truth_particles["MC::Particle.theta"] = np.arccos(truth_particles["MC::Particle.pz"]/truth_particles["MC::Particle.p"]) * 180/np.pi
     rec_particles["REC::Particles.theta"] = np.arccos(rec_particles["REC::Particles.pz"]/rec_particles["REC::Particles.p"]) * 180/np.pi
     
-    delta_R = []
-    delta_R_cut_value = 10
-    # For every reconstructed particle, we calculate the Delta R value with respect to every truth particle in the event
-    for event in range(len(rec_particles["REC::Particles.theta"])):
-        delta_R_event = []
-        for rec_phi, rec_theta in zip(rec_particles["REC::Particles.phi"][event], rec_particles["REC::Particles.theta"][event]):
-            delta_R_particle = []
-            for truth_phi, truth_theta in zip(truth_particles["MC::Particle.phi"][event], truth_particles["MC::Particle.theta"][event]):
-                delta_R_particle.append(np.sqrt( angular_difference(rec_phi, truth_phi )**2 + (rec_theta- truth_theta)**2))
-            delta_R_event.append(delta_R_particle)
-        delta_R.append(delta_R_event)
-    
-    matching_index, min_delta_R, keep_reco = [], [], []
+    delta_phi = []
+    delta_theta = []
+    # Cut values
+    delta_theta_cut = 2
+    delta_phi_cut = 4
 
-    for event_i, delta_R_event in enumerate(delta_R):
+    # For every reconstructed particle, we calculate the Δθ and Δφ w.r.t every truth particle in the event
+    for event in range(len(rec_particles["REC::Particles.theta"])):
+        delta_phi_event = []
+        delta_theta_event = []
+        for rec_phi, rec_theta in zip(rec_particles["REC::Particles.phi"][event],
+                                    rec_particles["REC::Particles.theta"][event]):
+            delta_phi_particle = []
+            delta_theta_particle = []
+            for truth_phi, truth_theta in zip(truth_particles["MC::Particle.phi"][event],
+                                            truth_particles["MC::Particle.theta"][event]):
+                dphi = angular_difference(rec_phi, truth_phi)
+                dtheta = rec_theta - truth_theta
+                delta_phi_particle.append(dphi)
+                delta_theta_particle.append(dtheta)
+            delta_phi_event.append(delta_phi_particle)
+            delta_theta_event.append(delta_theta_particle)
+        delta_phi.append(delta_phi_event)
+        delta_theta.append(delta_theta_event)
+
+    matching_index, min_delta_phi, min_delta_theta, keep_reco = [], [], [], []
+
+    for event_i, (delta_phi_event, delta_theta_event) in enumerate(zip(delta_phi, delta_theta)):
         matching_index_event = []
-        min_delta_R_event = []
+        min_delta_phi_event = []
+        min_delta_theta_event = []
         keep_reco_event = []
 
-        # Looping over all the delta R for each reco particle in the event
-        for particle_delta_R in delta_R_event:
-            if len(particle_delta_R) == 0:
-                print(f"Event number {event_i} had no truth particles for DeltaR calculation!")
+        for dphi_list, dtheta_list in zip(delta_phi_event, delta_theta_event):
+            if len(dphi_list) == 0:
+                print(f"Event number {event_i} had no truth particles for matching!")
                 matching_index_event.append(-1)
-                min_delta_R_event.append(-1)
+                min_delta_phi_event.append(-1)
+                min_delta_theta_event.append(-1)
                 keep_reco_event.append(False)
                 continue
-            # Finding the minimum delta R. i.e. the corresponding truth particle
-            min_index = np.argmin(particle_delta_R)
-            min_delta_R_particle = particle_delta_R[min_index]
-            # If the minimum delta R value is greater than the cutoff, don't consider this particle
-            if min_delta_R_particle > delta_R_cut_value:
+
+            # Find truth particle that minimizes |Δθ| + |Δφ| (or could use another metric)
+            distances = np.abs(dtheta_list) + np.abs(dphi_list)
+            min_index = np.argmin(distances)
+            min_dphi = dphi_list[min_index]
+            min_dtheta = dtheta_list[min_index]
+
+            # Apply the new rectangular cut
+            if (abs(min_dtheta) > delta_theta_cut) or (abs(min_dphi) > delta_phi_cut):
                 matching_index_event.append(-1)
-                min_delta_R_event.append(-1)
+                min_delta_phi_event.append(-1)
+                min_delta_theta_event.append(-1)
                 keep_reco_event.append(False)
                 continue
-            # Handling the case where two reco particles correspond to the same truth particle
-            # In this case, keep the particle with the smaller Delta R value.
-            # Give the other particle the next smallest Delta R matching. If there isn't one, append -1
+
+            # Handle duplicates like before
             if min_index in matching_index_event:
-                other_particle_index = matching_index_event.index(min_index) # Getting index of other reco particle in the event
-                other_particle_deltaR = min_delta_R_event[other_particle_index]
-                if min_delta_R_particle < other_particle_deltaR:
-                    # Add this particle
+                other_particle_index = matching_index_event.index(min_index)
+                other_dphi = min_delta_phi_event[other_particle_index]
+                other_dtheta = min_delta_theta_event[other_particle_index]
+                other_distance = abs(other_dphi) + abs(other_dtheta)
+                this_distance = abs(min_dphi) + abs(min_dtheta)
+
+                if this_distance < other_distance:
+                    # Replace with this particle
                     matching_index_event.append(min_index)
-                    min_delta_R_event.append(min_delta_R_particle)
+                    min_delta_phi_event.append(min_dphi)
+                    min_delta_theta_event.append(min_dtheta)
                     keep_reco_event.append(True)
-                    # Get second lowest delta R for other particle
-                    all_other_delta_R = delta_R_event[other_particle_index]
-                    second_smallest_index = find_second_smallest(all_other_delta_R)
-                    # Getting the second smallest Delta R for this particle.
-                    # If there is no second smallest, it'll have index -1 and we'll ignore this particle
-                    # If there is a second smallest, check if the Delta R value satisifies the Delta R cut
-                    matching_index_event[other_particle_index] = second_smallest_index
+
+                    # Try second-best for the other particle
+                    distances_other = np.abs(delta_theta_event[other_particle_index]) + \
+                                    np.abs(delta_phi_event[other_particle_index])
+                    second_smallest_index = find_second_smallest(distances_other)
+
                     if second_smallest_index > -1:
-                        if all_other_delta_R[second_smallest_index] < delta_R_cut_value:
-                            min_delta_R_event[other_particle_index] = all_other_delta_R[second_smallest_index]
+                        new_dphi = delta_phi_event[other_particle_index][second_smallest_index]
+                        new_dtheta = delta_theta_event[other_particle_index][second_smallest_index]
+                        if (abs(new_dtheta) <= delta_theta_cut) and (abs(new_dphi) <= delta_phi_cut):
+                            matching_index_event[other_particle_index] = second_smallest_index
+                            min_delta_phi_event[other_particle_index] = new_dphi
+                            min_delta_theta_event[other_particle_index] = new_dtheta
                             keep_reco_event[other_particle_index] = True
                         else:
-                            min_delta_R_event[other_particle_index] = -1
+                            min_delta_phi_event[other_particle_index] = -1
+                            min_delta_theta_event[other_particle_index] = -1
                             keep_reco_event[other_particle_index] = False
                     else:
-                            min_delta_R_event[other_particle_index] = -1
-                            keep_reco_event[other_particle_index] = False
+                        min_delta_phi_event[other_particle_index] = -1
+                        min_delta_theta_event[other_particle_index] = -1
+                        keep_reco_event[other_particle_index] = False
                 else:
-                    # For the current particle, get the second smallest Delta R if it exists.
-                    # Make sure it satisfies the Delta R cut
-                    second_smallest_index = find_second_smallest(particle_delta_R)
+                    # Current particle: try second-best
+                    second_smallest_index = find_second_smallest(distances)
                     matching_index_event.append(second_smallest_index)
                     if second_smallest_index > -1:
-                        if particle_delta_R[second_smallest_index] < delta_R_cut_value:
-                            min_delta_R_event.append(particle_delta_R[second_smallest_index])
+                        new_dphi = dphi_list[second_smallest_index]
+                        new_dtheta = dtheta_list[second_smallest_index]
+                        if (abs(new_dtheta) <= delta_theta_cut) and (abs(new_dphi) <= delta_phi_cut):
+                            min_delta_phi_event.append(new_dphi)
+                            min_delta_theta_event.append(new_dtheta)
                             keep_reco_event.append(True)
                         else:
-                            min_delta_R_event.append(-1)
+                            min_delta_phi_event.append(-1)
+                            min_delta_theta_event.append(-1)
                             keep_reco_event.append(False)
                     else:
-                        min_delta_R_event.append(-1)
+                        min_delta_phi_event.append(-1)
+                        min_delta_theta_event.append(-1)
                         keep_reco_event.append(False)
             else:
                 matching_index_event.append(min_index)
-                min_delta_R_event.append(min_delta_R_particle)
+                min_delta_phi_event.append(min_dphi)
+                min_delta_theta_event.append(min_dtheta)
                 keep_reco_event.append(True)
+
         matching_index.append(matching_index_event)
-        min_delta_R.append(min_delta_R_event)
+        min_delta_phi.append(min_delta_phi_event)
+        min_delta_theta.append(min_delta_theta_event)
         keep_reco.append(keep_reco_event)
 
+    # Convert to awkward arrays as before
     matching_index = ak.Array(matching_index)
-    min_delta_R = ak.Array(min_delta_R)
+    min_delta_phi = ak.Array(min_delta_phi)
+    min_delta_theta = ak.Array(min_delta_theta)
     keep_reco = ak.Array(keep_reco)
+
     matching_index = matching_index[keep_reco]
-    min_delta_R = min_delta_R[keep_reco]
+    min_delta_phi = min_delta_phi[keep_reco]
+    min_delta_theta = min_delta_theta[keep_reco]
     event_data["reconstructed_particles"] = event_data["reconstructed_particles"][keep_reco]
+
+
 
     event_data["truth_particles"]=event_data["truth_particles"][matching_index]
     electron_mask = (event_data["truth_particles"]["MC::Particle.pid"] != 11) & (event_data["truth_particles"]["MC::Particle.pid"]!=-11)
