@@ -1,0 +1,5 @@
+DATA_DIRECTORY: /volatile/clas12/rmilton/RICH_data/ # Directory containing the input root files
+SECTOR: 1
+MAX_NUM_TRAJECTORIES: 1
+USE_NEGATIVE_CHARGE: True
+USE_POSITIVE_CHARGE: False
