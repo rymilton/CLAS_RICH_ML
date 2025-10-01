@@ -56,10 +56,11 @@ def select_hits(
     # Removing events with no reconstructed particles
     nonempty_event_mask = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"], axis=1) > 0
     event_data = event_data[nonempty_event_mask]
-
+    print(f"Have {len(event_data)} events after removing empty events")
     # Removing events where the first reconstructed particle isn't the trigger electron
     trigger_mask = (event_data["reconstructed_particles"]["REC::Particles.pid"][:,0]==11) & (event_data["reconstructed_particles"]["REC::Particles.status"][:,0]<0)
     event_data = event_data[trigger_mask]
+    print(f"Have {len(event_data)} events after removing bad trigger events")
 
     # Removing invalid RICH hits and keeping desired sector hits
     hits = event_data["RICH_hits"]
@@ -414,7 +415,7 @@ def main():
     data_parameters = LoadYaml(flags.config, flags.config_directory)
     if data_parameters["SECTOR"] != 1 and data_parameters["SECTOR"] != 4:
         raise ValueError("SECTOR must be set to either 1 or 4 in data.yaml!")
-    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")
+    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")[:500]
     data = open_file(data_files)
     data = select_hits(
         data,
@@ -433,11 +434,11 @@ def main():
         test_data = data[num_training_events:]
         data_dict = {"train": training_data, "test": test_data}
 
-        for name, split_data in data_dict:
+        for name, split_data in data_dict.items():
             save_data(
                 split_data,
                 save_dir = data_parameters["SAVE_DIRECTORY"],
-                file_name = data_parameters["SAVE_FILE_NAME"]+name,
+                file_name = data_parameters["SAVE_FILE_NAME"]+f"_{name}",
                 sector=data_parameters["SECTOR"],
                 )
     else:
