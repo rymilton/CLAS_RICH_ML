@@ -51,11 +51,22 @@ def select_hits(
         use_negatives = True,
         use_positives = True,
         ):
+
+    print(f"Have {len(event_data)} events originally")
+    # Removing events with no reconstructed particles
+    nonempty_event_mask = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"], axis=1) > 0
+    event_data = event_data[nonempty_event_mask]
+
+    # Removing events where the first reconstructed particle isn't the trigger electron
+    trigger_mask = (event_data["reconstructed_particles"]["REC::Particles.pid"][:,0]==11) & (event_data["reconstructed_particles"]["REC::Particles.status"][:,0]<0)
+    event_data = event_data[trigger_mask]
+
     # Removing invalid RICH hits and keeping desired sector hits
     hits = event_data["RICH_hits"]
     valid_hits_mask = (hits["RICH::Hit.cluster"] == 0) & (hits["RICH::Hit.cluster"] == 0) & (hits["RICH::Hit.pmt"] > 0) & (hits["RICH::Hit.pmt"] < 392)
     hits_sector_mask = hits["RICH::Hit.sector"] == sector
     event_data["RICH_hits"] = event_data["RICH_hits"][(valid_hits_mask) & (hits_sector_mask)]
+    # Removing events without a valid RICH hit
     nonempty_hits_mask = ak.num(event_data["RICH_hits"]["RICH::Hit.x"])>0
     event_data = event_data[nonempty_hits_mask]
 
@@ -67,26 +78,41 @@ def select_hits(
     event_data["trajectories"] = event_data["trajectories"][(RICH_trajectory_mask) & (trajectory_sector_mask)]
     nonempty_trajectories_mask = ak.num(event_data["trajectories"]["REC::Traj.x"])>0
     event_data = event_data[nonempty_trajectories_mask]
-
     # Only keeping reconstructed particles that have a trajectory that satisfied selection
     unique_pindex = [np.unique(event_pindices).to_list() for event_pindices in event_data["trajectories"]["REC::Traj.pindex"]]
     event_data["reconstructed_particles"] = event_data["reconstructed_particles"][unique_pindex]
+
     # Removing neutral particles from reconstructed data
-    neutral_mask = (event_data["reconstructed_particles"]["REC::Particles.charge"] > 0 ) | event_data["reconstructed_particles"]["REC::Particles.charge"] < 0
+    neutral_mask = (event_data["reconstructed_particles"]["REC::Particles.charge"] > 0 ) | (event_data["reconstructed_particles"]["REC::Particles.charge"] < 0)
     event_data["reconstructed_particles"] = event_data["reconstructed_particles"][neutral_mask]
+    # Only keeping certain charged particles depending on user option
     if not use_negatives and not use_positives:
         raise ValueError("Must enable selection of negative or positive particles!")
-    if not use_negatives:
-        negatives_mask = event_data["reconstructed_particles"]["REC::Particles.charge"] > 0
+    if use_negatives:
+        negatives_mask = event_data["reconstructed_particles"]["REC::Particles.charge"] < 0
         event_data["reconstructed_particles"] = event_data["reconstructed_particles"][negatives_mask]
-    if not use_positives:
-        positives_mask = event_data["reconstructed_particles"]["REC::Particles.charge"] < 0 
+    if use_positives:
+        positives_mask = event_data["reconstructed_particles"]["REC::Particles.charge"] > 0 
         event_data["reconstructed_particles"] = event_data["reconstructed_particles"][positives_mask]
 
-    # Removing events that don't have any reconstructed particles. Not sure if this ever actually happens but worth checking
+    # Removing invalid momentum values
+    reconstructed_momentum = np.sqrt(
+        event_data["reconstructed_particles"]["REC::Particles.px"]**2 +
+        event_data["reconstructed_particles"]["REC::Particles.py"]**2 +
+        event_data["reconstructed_particles"]["REC::Particles.pz"]**2)
+    event_data["reconstructed_particles"] = ak.with_field(
+        event_data["reconstructed_particles"],
+        reconstructed_momentum,
+        "REC::Particles.p"
+    )
+
+    momentum_mask = (reconstructed_momentum < 12) & (reconstructed_momentum > 0)
+    event_data["reconstructed_particles"] = event_data["reconstructed_particles"][momentum_mask]
+
+    # After the charge and momentum cuts, removing events without any reconstructed particles
     nonempty_recoparticles_mask = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"])>0
     event_data = event_data[nonempty_recoparticles_mask]
-
+    print(f"Have {len(event_data)} events after cuts")
     return event_data
 def match_to_truth(event_data, max_num_trajectories = None):
 
@@ -102,8 +128,6 @@ def match_to_truth(event_data, max_num_trajectories = None):
     
     rec_particles = event_data["reconstructed_particles"]
     truth_particles = event_data["truth_particles"]
-    rec_particles["REC::Particles.p"] = np.sqrt(rec_particles["REC::Particles.px"]**2 + rec_particles["REC::Particles.py"]**2 + rec_particles["REC::Particles.pz"]**2)
-    rec_particles = rec_particles[rec_particles["REC::Particles.p"]>0]
     truth_particles["MC::Particle.p"] = np.sqrt(truth_particles["MC::Particle.px"]**2 + truth_particles["MC::Particle.py"]**2 + truth_particles["MC::Particle.pz"]**2)
     truth_particles = truth_particles[truth_particles["MC::Particle.p"]>0]
     truth_particles["MC::Particle.phi"] = np.arctan2(truth_particles["MC::Particle.py"], truth_particles["MC::Particle.px"])
@@ -246,13 +270,20 @@ def match_to_truth(event_data, max_num_trajectories = None):
     min_delta_theta = min_delta_theta[keep_reco]
     event_data["reconstructed_particles"] = event_data["reconstructed_particles"][keep_reco]
 
+    # Ordering the truth particles and removing the truth particles without a matching reco entry
     event_data["truth_particles"]=event_data["truth_particles"][matching_index]
     electron_mask = (event_data["truth_particles"]["MC::Particle.pid"] != 11) & (event_data["truth_particles"]["MC::Particle.pid"]!=-11)
     event_data["truth_particles"]=event_data["truth_particles"][electron_mask]
     event_data["reconstructed_particles"]=event_data["reconstructed_particles"][electron_mask]
     
+    pion_kaon_mask = (event_data["truth_particles"]["MC::Particle.pid"] == 211) | (event_data["truth_particles"]["MC::Particle.pid"] == -211) |\
+    (event_data["truth_particles"]["MC::Particle.pid"] == -321) | (event_data["truth_particles"]["MC::Particle.pid"] == 321)
+    event_data["truth_particles"] =event_data["truth_particles"][pion_kaon_mask]
+    event_data["reconstructed_particles"] = event_data["reconstructed_particles"][pion_kaon_mask]
+    
     number_truth_particles = ak.num(event_data["truth_particles"]["MC::Particle.pid"])
     number_reconstructed_particles = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"])
+
     if not ak.array_equal(number_truth_particles, number_reconstructed_particles):
         raise ValueError("Some events had an unequal number of reco and truth particles!")
     nonempty_particles_mask = ak.num(event_data["truth_particles"]["MC::Particle.pid"])>0
@@ -260,31 +291,58 @@ def match_to_truth(event_data, max_num_trajectories = None):
     if max_num_trajectories is not None:
         num_particles_mask = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"]) <= max_num_trajectories
         event_data = event_data[num_particles_mask]
-    print(len(event_data))
+    print(f"Have {len(event_data)} events after particle removal and reco/truth matching")
     return event_data
 
-# In every event, returns [0/1, 0/1, 0/1] if a pion, kaon, proton are present
+# In every event, returns [0/1, 0/1] if a pion or kaon are present
 def pid_to_indices(pid):
     indices = []
     for event in pid:
-        type_array = np.zeros(shape=3)
+        type_array = np.zeros(shape=2)
         for particle in event:
             if particle==211 or particle==-211:
                 type_array[0] = 1
             elif particle == 321 or particle==-321:
                 type_array[1] = 1
-            elif particle == 2212 or particle == -2212:
-                type_array[2] = 1
             else:
                 continue
         indices.append(type_array)
     return ak.Array(indices)
-def scale_data(data):
-    data_min = ak.min(data)
-    data_max = ak.max(data)
+def scale_data(data, sector, data_name):
+
+    min_max_dict = {
+        "4": {
+            "RICH::Hit.x": {"min": -166, "max":-37},
+            "RICH::Hit.y": {"min": -81, "max":78},
+            "RICH::Hit.time": {"min": 125, "max":19500},
+            "REC::Particles.px": {"min": -3, "max":0},
+            "REC::Particles.py": {"min": -1, "max":1},
+            "REC::Particles.pz": {"min": 1, "max":12},
+            "trajectories/RICH_aerogel_b1/REC::Traj.x": {"min": -123, "max":-35},
+            "trajectories/RICH_aerogel_b1/REC::Traj.y": {"min": -45, "max":45},
+            "trajectories/RICH_aerogel_b1/REC::Traj.z": {"min": 500, "max":647},
+            "trajectories/RICH_aerogel_b1/REC::Traj.cx": {"min": -1, "max":1},
+            "trajectories/RICH_aerogel_b1/REC::Traj.cy": {"min": -1, "max":1},
+            "trajectories/RICH_aerogel_b1/REC::Traj.cz": {"min": -1, "max":1},
+            "trajectories/RICH_aerogel_b2/REC::Traj.x": {"min": -184, "max":-99},
+            "trajectories/RICH_aerogel_b2/REC::Traj.y": {"min": -80, "max":71},
+            "trajectories/RICH_aerogel_b2/REC::Traj.z": {"min": 477, "max":612},
+            "trajectories/RICH_aerogel_b2/REC::Traj.cx": {"min": -1, "max":1},
+            "trajectories/RICH_aerogel_b2/REC::Traj.cy": {"min": -1, "max":1},
+            "trajectories/RICH_aerogel_b2/REC::Traj.cz": {"min": -1, "max":1},
+            "trajectories/RICH_aerogel_b3/REC::Traj.x": {"min": -244, "max":-150},
+            "trajectories/RICH_aerogel_b3/REC::Traj.y": {"min": -118, "max":89},
+            "trajectories/RICH_aerogel_b3/REC::Traj.z": {"min": 454, "max":583},
+            "trajectories/RICH_aerogel_b3/REC::Traj.cx": {"min": -1, "max":1},
+            "trajectories/RICH_aerogel_b3/REC::Traj.cy": {"min": -1, "max":1},
+            "trajectories/RICH_aerogel_b3/REC::Traj.cz": {"min": -1, "max":1},
+        }
+    }
+    data_min = min_max_dict[f"{sector}"][data_name]["min"]
+    data_max = min_max_dict[f"{sector}"][data_name]["max"]
     data_scaled = (data - data_min) / (data_max - data_min)
-    return data_scaled
-def save_data(event_data, save_dir, file_name):
+    return data
+def save_data(event_data, save_dir, file_name, sector):
 
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -292,9 +350,9 @@ def save_data(event_data, save_dir, file_name):
     output_file =  h5.File(os.path.join(save_dir, f"{file_name}.h5"), "w")
 
     output_RICH_hits = {}
-    output_RICH_hits["RICH::Hit.x"] = scale_data(event_data["RICH_hits"]["RICH::Hit.x"])
-    output_RICH_hits["RICH::Hit.y"] = scale_data(event_data["RICH_hits"]["RICH::Hit.y"])
-    output_RICH_hits["RICH::Hit.time"] = scale_data(event_data["RICH_hits"]["RICH::Hit.time"])
+    output_RICH_hits["RICH::Hit.x"] = scale_data(event_data["RICH_hits"]["RICH::Hit.x"], sector, "RICH::Hit.x")
+    output_RICH_hits["RICH::Hit.y"] = scale_data(event_data["RICH_hits"]["RICH::Hit.y"], sector, "RICH::Hit.y")
+    output_RICH_hits["RICH::Hit.time"] = scale_data(event_data["RICH_hits"]["RICH::Hit.time"], sector, "RICH::Hit.time")
     
     float_type = h5.vlen_dtype(np.dtype('float32'))
     int_type = h5.vlen_dtype(np.dtype('int32'))
@@ -310,9 +368,9 @@ def save_data(event_data, save_dir, file_name):
 
     output_reco_particles = {}
     output_reco_particles["REC::Particles.pid"] = event_data["reconstructed_particles"]["REC::Particles.pid"]
-    output_reco_particles["REC::Particles.px"] = scale_data(event_data["reconstructed_particles"]["REC::Particles.px"])
-    output_reco_particles["REC::Particles.py"] = scale_data(event_data["reconstructed_particles"]["REC::Particles.py"])
-    output_reco_particles["REC::Particles.pz"] = scale_data(event_data["reconstructed_particles"]["REC::Particles.pz"])
+    output_reco_particles["REC::Particles.px"] = scale_data(event_data["reconstructed_particles"]["REC::Particles.px"], sector, "REC::Particles.px")
+    output_reco_particles["REC::Particles.py"] = scale_data(event_data["reconstructed_particles"]["REC::Particles.py"], sector, "REC::Particles.py")
+    output_reco_particles["REC::Particles.pz"] = scale_data(event_data["reconstructed_particles"]["REC::Particles.pz"], sector, "REC::Particles.pz")
 
     for key, value in output_reco_particles.items():
         if "pid" in key:
@@ -324,16 +382,28 @@ def save_data(event_data, save_dir, file_name):
     output_trajectories = {}
 
     RICH_aerogel_b1_mask = event_data["trajectories"]["REC::Traj.layer"]==2
-    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.x"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.x"])
-    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.y"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.y"])
+    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.x"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.x"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.x")
+    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.y"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.y"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.y")
+    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.z"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.z"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.z")
+    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.cx"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.cx"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.cx")
+    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.cy"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.cy"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.cy")
+    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.cz"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.cz"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.cz")
 
     RICH_aerogel_b2_mask = event_data["trajectories"]["REC::Traj.layer"]==3
-    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.x"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.x"])
-    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.y"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.y"])
+    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.x"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.x"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.x")
+    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.y"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.y"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.y")
+    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.z"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.z"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.z")
+    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.cx"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.cx"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.cx")
+    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.cy"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.cy"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.cy")
+    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.cz"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.cz"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.cz")
 
     RICH_aerogel_b3_mask = event_data["trajectories"]["REC::Traj.layer"]==4
-    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.x"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.x"])
-    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.y"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.y"])
+    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.x"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.x"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.x")
+    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.y"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.y"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.y")
+    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.z"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.z"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.z")
+    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.cx"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.cx"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.cx")
+    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.cy"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.cy"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.cy")
+    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.cz"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.cz"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.cz")
 
     for key, value in output_trajectories.items():
         dset = output_file.create_dataset(key, (len(value),), dtype=float_type)
@@ -344,23 +414,23 @@ def main():
     data_parameters = LoadYaml(flags.config, flags.config_directory)
     if data_parameters["SECTOR"] != 1 and data_parameters["SECTOR"] != 4:
         raise ValueError("SECTOR must be set to either 1 or 4 in data.yaml!")
-    test_file = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")
-    print(len(test_file))
-    test_data = open_file(test_file)
-    test_data = select_hits(
-        test_data,
+    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")
+    data = open_file(data_files)
+    data = select_hits(
+        data,
         sector=data_parameters["SECTOR"],
         use_negatives = data_parameters["USE_NEGATIVE_CHARGE"],
         use_positives = data_parameters["USE_POSITIVE_CHARGE"]
         )
-    test_data = match_to_truth(
-        test_data,
+    data = match_to_truth(
+        data,
         max_num_trajectories = data_parameters["MAX_NUM_TRAJECTORIES"],
         )
     save_data(
-        test_data,
+        data,
         save_dir = data_parameters["SAVE_DIRECTORY"],
-        file_name = data_parameters["SAVE_FILE_NAME"]
+        file_name = data_parameters["SAVE_FILE_NAME"],
+        sector=data_parameters["SECTOR"], 
         )
 
 
