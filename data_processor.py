@@ -426,12 +426,27 @@ def main():
         data,
         max_num_trajectories = data_parameters["MAX_NUM_TRAJECTORIES"],
         )
-    save_data(
-        data,
-        save_dir = data_parameters["SAVE_DIRECTORY"],
-        file_name = data_parameters["SAVE_FILE_NAME"],
-        sector=data_parameters["SECTOR"], 
-        )
+    
+    if data_parameters["TRAIN_TEST_SPLIT"]:
+        num_training_events = int(data_parameters["TRAINING_FRACTION"]*len(data))
+        training_data = data[:num_training_events]
+        test_data = data[num_training_events:]
+        data_dict = {"train": training_data, "test": test_data}
+
+        for name, split_data in data_dict:
+            save_data(
+                split_data,
+                save_dir = data_parameters["SAVE_DIRECTORY"],
+                file_name = data_parameters["SAVE_FILE_NAME"]+name,
+                sector=data_parameters["SECTOR"],
+                )
+    else:
+        save_data(
+            data,
+            save_dir = data_parameters["SAVE_DIRECTORY"],
+            file_name = data_parameters["SAVE_FILE_NAME"],
+            sector=data_parameters["SECTOR"],
+            )
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 DATA_DIRECTORY: /volatile/clas12/rmilton/RICH_data/ # Directory containing the input root files
 SAVE_DIRECTORY: /volatile/clas12/rmilton/processed_RICH_data_sector4_positives/
-SAVE_FILE_NAME: testing_RICH_saving
+SAVE_FILE_NAME: preprocessed_RICH_sector4_positives_kaons_pions
 SECTOR: 4
 MAX_NUM_TRAJECTORIES: 1
 USE_NEGATIVE_CHARGE: False
 USE_POSITIVE_CHARGE: True
+TRAIN_TEST_SPLIT: True
+TRAINING_FRACTION: 0.75
