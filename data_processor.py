@@ -50,6 +50,7 @@ def select_hits(
         sector,
         use_negatives = True,
         use_positives = True,
+        max_num_trajectories = None
         ):
 
     print(f"Have {len(event_data)} events originally")
@@ -64,12 +65,14 @@ def select_hits(
 
     # Removing invalid RICH hits and keeping desired sector hits
     hits = event_data["RICH_hits"]
-    valid_hits_mask = (hits["RICH::Hit.cluster"] == 0) & (hits["RICH::Hit.cluster"] == 0) & (hits["RICH::Hit.pmt"] > 0) & (hits["RICH::Hit.pmt"] < 392)
+    valid_hits_mask = (hits["RICH::Hit.cluster"] == 0) & (hits["RICH::Hit.xtalk"] == 0) & (hits["RICH::Hit.pmt"] > 0) & (hits["RICH::Hit.pmt"] < 392)
     hits_sector_mask = hits["RICH::Hit.sector"] == sector
     event_data["RICH_hits"] = event_data["RICH_hits"][(valid_hits_mask) & (hits_sector_mask)]
     # Removing events without a valid RICH hit
     nonempty_hits_mask = ak.num(event_data["RICH_hits"]["RICH::Hit.x"])>0
     event_data = event_data[nonempty_hits_mask]
+
+    print(f"Have {len(event_data)} events after removing invalid RICH hits")
 
     # Selecting reconstructed particles that have a trajectory that hits the RICH aerogel
     RICH_detector_ID = 18
@@ -77,8 +80,17 @@ def select_hits(
     RICH_trajectory_mask = (trajectories["REC::Traj.detector"]==RICH_detector_ID) & (trajectories["REC::Traj.layer"]>1)
     trajectory_sector_mask = trajectories["REC::Traj.x"] > 0 if sector == 1 else trajectories["REC::Traj.x"] < 0
     event_data["trajectories"] = event_data["trajectories"][(RICH_trajectory_mask) & (trajectory_sector_mask)]
-    nonempty_trajectories_mask = ak.num(event_data["trajectories"]["REC::Traj.x"])>0
-    event_data = event_data[nonempty_trajectories_mask]
+
+    # Removing events with more than the max number of particles
+    num_trajectories_mask = ak.num(event_data["trajectories"]["REC::Traj.x"])>0
+
+    # Need to think about how to remove the events with more than 1 particle appropriately
+    unique_pindex = [np.unique(event_pindices).to_list() for event_pindices in event_data["trajectories"]["REC::Traj.pindex"]]
+    if max_num_trajectories is not None:
+        num_trajectories_mask = (num_trajectories_mask) & (ak.num(unique_pindex, axis=1)<= max_num_trajectories)
+    event_data = event_data[num_trajectories_mask]
+    print(f"Have {len(event_data)} events after selecting trajectories")
+
     # Only keeping reconstructed particles that have a trajectory that satisfied selection
     unique_pindex = [np.unique(event_pindices).to_list() for event_pindices in event_data["trajectories"]["REC::Traj.pindex"]]
     event_data["reconstructed_particles"] = event_data["reconstructed_particles"][unique_pindex]
@@ -89,12 +101,17 @@ def select_hits(
     # Only keeping certain charged particles depending on user option
     if not use_negatives and not use_positives:
         raise ValueError("Must enable selection of negative or positive particles!")
+
+    charge_mask = None
     if use_negatives:
-        negatives_mask = event_data["reconstructed_particles"]["REC::Particles.charge"] < 0
-        event_data["reconstructed_particles"] = event_data["reconstructed_particles"][negatives_mask]
+        negative_mask = event_data["reconstructed_particles"]["REC::Particles.charge"] < 0
+        charge_mask = negative_mask if charge_mask is None else (charge_mask) | (negative_mask)
+
     if use_positives:
-        positives_mask = event_data["reconstructed_particles"]["REC::Particles.charge"] > 0 
-        event_data["reconstructed_particles"] = event_data["reconstructed_particles"][positives_mask]
+        positive_mask = event_data["reconstructed_particles"]["REC::Particles.charge"] > 0
+        charge_mask = positive_mask if charge_mask is None else (charge_mask) | (positive_mask)
+
+    event_data["reconstructed_particles"] = event_data["reconstructed_particles"][charge_mask]
 
     # Removing invalid momentum values
     reconstructed_momentum = np.sqrt(
@@ -113,7 +130,7 @@ def select_hits(
     # After the charge and momentum cuts, removing events without any reconstructed particles
     nonempty_recoparticles_mask = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"])>0
     event_data = event_data[nonempty_recoparticles_mask]
-    print(f"Have {len(event_data)} events after cuts")
+    print(f"Have {len(event_data)} events after charge and momentum cuts")
     return event_data
 def match_to_truth(event_data, max_num_trajectories = None):
 
@@ -342,7 +359,7 @@ def scale_data(data, sector, data_name):
     data_min = min_max_dict[f"{sector}"][data_name]["min"]
     data_max = min_max_dict[f"{sector}"][data_name]["max"]
     data_scaled = (data - data_min) / (data_max - data_min)
-    return data
+    return data_scaled
 def save_data(event_data, save_dir, file_name, sector):
 
     if not os.path.exists(save_dir):
@@ -415,13 +432,14 @@ def main():
     data_parameters = LoadYaml(flags.config, flags.config_directory)
     if data_parameters["SECTOR"] != 1 and data_parameters["SECTOR"] != 4:
         raise ValueError("SECTOR must be set to either 1 or 4 in data.yaml!")
-    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")[:500]
+    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")
     data = open_file(data_files)
     data = select_hits(
         data,
         sector=data_parameters["SECTOR"],
         use_negatives = data_parameters["USE_NEGATIVE_CHARGE"],
-        use_positives = data_parameters["USE_POSITIVE_CHARGE"]
+        use_positives = data_parameters["USE_POSITIVE_CHARGE"],
+        max_num_trajectories = data_parameters["MAX_NUM_TRAJECTORIES"],
         )
     data = match_to_truth(
         data,
