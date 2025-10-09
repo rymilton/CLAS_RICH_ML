@@ -33,11 +33,10 @@ class H5Dataset(Dataset):
 
         particle_feature_names = ["REC::Particles.p"]
         particle_momenta_event = np.stack([self.rec_particles[idx][feature] for feature in particle_feature_names], axis=1)
-
         trajectory_feature_names = ['REC::Traj.x', 'REC::Traj.y', 'REC::Traj.cx', 'REC::Traj.cy', 'REC::Traj.cz']
         aerogel_event = np.stack([self.rec_traj[idx][feature] for feature in trajectory_feature_names], axis=1)
-        
-        globals_event = np.hstack([particle_momenta_event, aerogel_b1_event, aerogel_b2_event, aerogel_b3_event])
+
+        globals_event = ak.flatten(np.hstack([particle_momenta_event, aerogel_event]))
         label = self.labels[idx]
         label = torch.tensor(label, dtype=torch.float32)
         sample = torch.tensor(RICH_hits_event, dtype=torch.float32)

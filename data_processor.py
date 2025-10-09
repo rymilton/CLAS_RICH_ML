@@ -442,8 +442,8 @@ def save_data(event_data, save_dir, file_name, sector):
     b3_cy = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.cy"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.cy")
     b3_cz = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.cz"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.cz")
 
-    output_trajectories["REC::Traj.x "] = np.concatenate((b1_x, b2_x, b3_x), axis=1)
-    output_trajectories["REC::Traj.y "] = np.concatenate((b1_y, b2_y, b3_y), axis=1)
+    output_trajectories["REC::Traj.x"] = np.concatenate((b1_x, b2_x, b3_x), axis=1)
+    output_trajectories["REC::Traj.y"] = np.concatenate((b1_y, b2_y, b3_y), axis=1)
     output_trajectories["REC::Traj.cx"] = np.concatenate((b1_cx, b2_cx, b3_cx), axis=1)
     output_trajectories["REC::Traj.cy"] = np.concatenate((b1_cy, b2_cy, b3_cy), axis=1)
     output_trajectories["REC::Traj.cz"] = np.concatenate((b1_cz, b2_cz, b3_cz), axis=1)
