@@ -66,7 +66,7 @@ def main():
         )
 
     training_dataset = H5Dataset(data_path)
-    dataloader = DataLoader(training_dataset, batch_size=64, shuffle=True, collate_fn=collate_fn)
+    dataloader = DataLoader(training_dataset, batch_size=training_parameters.get("BATCH_SIZE",64), shuffle=True, collate_fn=collate_fn)
 
     print("Setting up model")
     from model import GravNetModel   # wherever your model is defined
@@ -97,8 +97,8 @@ def main():
             model.zero_grad()
             outputs = model(hits_padded, globals_event, mask)
             loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            loss.backward() # Calculating gradients
+            optimizer.step() # Updating parameters
 
             running_loss += loss.item()
 
