@@ -16,9 +16,7 @@ class H5Dataset(Dataset):
             self.RICH_hits[entry] = self.data[f"RICH_Hits/{entry}"][:].tolist()
         self.RICH_hits = ak.Array(self.RICH_hits)
         for entry in list(self.data["trajectories"].keys()):
-            self.rec_traj[entry] = {}
-            for subentry in list(self.data[f"trajectories/{entry}"].keys()):
-                self.rec_traj[entry][subentry] = self.data[f"trajectories/{entry}/{subentry}"][:].tolist()
+            self.rec_traj[entry] = self.data[f"trajectories/{entry}"][:].tolist()
         self.rec_traj = ak.Array(self.rec_traj)
         for entry in list(self.data["reconstructed_particles"].keys()):
             self.rec_particles[entry] = self.data[f"reconstructed_particles/{entry}"][:].tolist()
@@ -30,16 +28,14 @@ class H5Dataset(Dataset):
 
     def __getitem__(self, idx):
         
-        hits_feature_names = ['RICH::Hit.time', 'RICH::Hit.x', 'RICH::Hit.y']
+        hits_feature_names = ['RICH::Hit.rawtime', 'RICH::Hit.x', 'RICH::Hit.y']
         RICH_hits_event = np.stack([self.RICH_hits[idx][feature] for feature in hits_feature_names], axis=1)
 
-        particle_feature_names = ["REC::Particles.px", "REC::Particles.py", "REC::Particles.pz"]
+        particle_feature_names = ["REC::Particles.p"]
         particle_momenta_event = np.stack([self.rec_particles[idx][feature] for feature in particle_feature_names], axis=1)
 
-        trajectory_feature_names = ['REC::Traj.x', 'REC::Traj.y', 'REC::Traj.z', 'REC::Traj.cx', 'REC::Traj.cy', 'REC::Traj.cz']
-        aerogel_b1_event = np.stack([self.rec_traj[idx]['RICH_aerogel_b1'][feature] for feature in trajectory_feature_names], axis=1)
-        aerogel_b2_event = np.stack([self.rec_traj[idx]['RICH_aerogel_b2'][feature] for feature in trajectory_feature_names], axis=1)
-        aerogel_b3_event = np.stack([self.rec_traj[idx]['RICH_aerogel_b3'][feature] for feature in trajectory_feature_names], axis=1)
+        trajectory_feature_names = ['REC::Traj.x', 'REC::Traj.y', 'REC::Traj.cx', 'REC::Traj.cy', 'REC::Traj.cz']
+        aerogel_event = np.stack([self.rec_traj[idx][feature] for feature in trajectory_feature_names], axis=1)
         
         globals_event = np.hstack([particle_momenta_event, aerogel_b1_event, aerogel_b2_event, aerogel_b3_event])
         label = self.labels[idx]
