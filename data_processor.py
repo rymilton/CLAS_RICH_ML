@@ -81,14 +81,17 @@ def select_hits(
     trajectory_sector_mask = trajectories["REC::Traj.x"] > 0 if sector == 1 else trajectories["REC::Traj.x"] < 0
     event_data["trajectories"] = event_data["trajectories"][(RICH_trajectory_mask) & (trajectory_sector_mask)]
 
-    # Removing events with more than the max number of particles
-    num_trajectories_mask = ak.num(event_data["trajectories"]["REC::Traj.x"])>0
-
-    # Need to think about how to remove the events with more than 1 particle appropriately
+    # If the maximum number of trajectories is set, removing events with more than max_num_trajectories in RICH
     unique_pindex = [np.unique(event_pindices).to_list() for event_pindices in event_data["trajectories"]["REC::Traj.pindex"]]
     if max_num_trajectories is not None:
-        num_trajectories_mask = (num_trajectories_mask) & (ak.num(unique_pindex, axis=1)<= max_num_trajectories)
+        num_trajectories = ak.num(unique_pindex, axis=1)
+        num_trajectories_mask = (num_trajectories > 0) & (num_trajectories <= max_num_trajectories)
+    else:
+        num_trajectories_mask = ak.num(event_data["trajectories"]["REC::Traj.x"])>0
     event_data = event_data[num_trajectories_mask]
+    # Removing events that have more than 1 trajectory for the saved particle
+    invalid_multiple_trajectory_mask = ak.num(event_data["trajectories"]["REC::Traj.layer"], axis=1)==1
+    event_data = event_data[invalid_multiple_trajectory_mask]
     print(f"Have {len(event_data)} events after selecting trajectories")
 
     # Only keeping reconstructed particles that have a trajectory that satisfied selection
@@ -310,6 +313,31 @@ def match_to_truth(event_data, max_num_trajectories = None):
         num_particles_mask = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"]) <= max_num_trajectories
         event_data = event_data[num_particles_mask]
     print(f"Have {len(event_data)} events after particle removal and reco/truth matching")
+
+    # Making sure pions and kaons have the same number of events. Randomly drop events from the particle that has more
+    pion_mask = (event_data["truth_particles"]["MC::Particle.pid"][:,0] == 211) | (event_data["truth_particles"]["MC::Particle.pid"][:,0] == -211)
+    kaon_mask = (event_data["truth_particles"]["MC::Particle.pid"][:,0] == -321) | (event_data["truth_particles"]["MC::Particle.pid"][:,0] == 321)
+    num_pions = ak.sum(pion_mask)
+    num_kaons = ak.sum(kaon_mask)
+    pion_kaon_balance_mask = np.ones(len(pion_mask), dtype=bool)
+    if num_pions > num_kaons:
+        number_difference = num_pions - num_kaons
+        # Get pion indices
+        pion_indices = np.where(ak.to_numpy(pion_mask))[0]
+        # Randomly choose pions to drop
+        drop_indices = np.random.choice(pion_indices, size=number_difference, replace=False)
+        pion_kaon_balance_mask[drop_indices] = False
+    elif num_kaons > num_pions:
+        number_difference = num_kaons - num_pions
+        # Get kaon indices
+        kaon_indices = np.where(ak.to_numpy(kaon_mask))[0]
+        # Randomly choose kaons to drop
+        drop_indices = np.random.choice(kaon_indices, size=number_difference, replace=False)
+        pion_kaon_balance_mask[drop_indices] = False
+    
+    event_data = event_data[pion_kaon_balance_mask]
+    print(f"Have {len(event_data)} events after balancing pions and kaons")
+
     return event_data
 
 # In every event, returns [0/1, 0/1] if a pion or kaon are present
@@ -332,25 +360,20 @@ def scale_data(data, sector, data_name):
         "4": {
             "RICH::Hit.x": {"min": -166, "max":-37},
             "RICH::Hit.y": {"min": -81, "max":78},
-            "RICH::Hit.time": {"min": 125, "max":19500},
-            "REC::Particles.px": {"min": -3, "max":0},
-            "REC::Particles.py": {"min": -1, "max":1},
-            "REC::Particles.pz": {"min": 1, "max":12},
+            "RICH::Hit.rawtime": {"min": 125, "max":19500},
+            "REC::Particles.p": {"min": 1, "max":12},
             "trajectories/RICH_aerogel_b1/REC::Traj.x": {"min": -123, "max":-35},
             "trajectories/RICH_aerogel_b1/REC::Traj.y": {"min": -45, "max":45},
-            "trajectories/RICH_aerogel_b1/REC::Traj.z": {"min": 500, "max":647},
             "trajectories/RICH_aerogel_b1/REC::Traj.cx": {"min": -1, "max":1},
             "trajectories/RICH_aerogel_b1/REC::Traj.cy": {"min": -1, "max":1},
             "trajectories/RICH_aerogel_b1/REC::Traj.cz": {"min": -1, "max":1},
             "trajectories/RICH_aerogel_b2/REC::Traj.x": {"min": -184, "max":-99},
             "trajectories/RICH_aerogel_b2/REC::Traj.y": {"min": -80, "max":71},
-            "trajectories/RICH_aerogel_b2/REC::Traj.z": {"min": 477, "max":612},
             "trajectories/RICH_aerogel_b2/REC::Traj.cx": {"min": -1, "max":1},
             "trajectories/RICH_aerogel_b2/REC::Traj.cy": {"min": -1, "max":1},
             "trajectories/RICH_aerogel_b2/REC::Traj.cz": {"min": -1, "max":1},
             "trajectories/RICH_aerogel_b3/REC::Traj.x": {"min": -244, "max":-150},
             "trajectories/RICH_aerogel_b3/REC::Traj.y": {"min": -118, "max":89},
-            "trajectories/RICH_aerogel_b3/REC::Traj.z": {"min": 454, "max":583},
             "trajectories/RICH_aerogel_b3/REC::Traj.cx": {"min": -1, "max":1},
             "trajectories/RICH_aerogel_b3/REC::Traj.cy": {"min": -1, "max":1},
             "trajectories/RICH_aerogel_b3/REC::Traj.cz": {"min": -1, "max":1},
@@ -370,7 +393,7 @@ def save_data(event_data, save_dir, file_name, sector):
     output_RICH_hits = {}
     output_RICH_hits["RICH::Hit.x"] = scale_data(event_data["RICH_hits"]["RICH::Hit.x"], sector, "RICH::Hit.x")
     output_RICH_hits["RICH::Hit.y"] = scale_data(event_data["RICH_hits"]["RICH::Hit.y"], sector, "RICH::Hit.y")
-    output_RICH_hits["RICH::Hit.time"] = scale_data(event_data["RICH_hits"]["RICH::Hit.time"], sector, "RICH::Hit.time")
+    output_RICH_hits["RICH::Hit.rawtime"] = scale_data(event_data["RICH_hits"]["RICH::Hit.rawtime"], sector, "RICH::Hit.rawtime")
     
     float_type = h5.vlen_dtype(np.dtype('float32'))
     int_type = h5.vlen_dtype(np.dtype('int32'))
@@ -386,9 +409,7 @@ def save_data(event_data, save_dir, file_name, sector):
 
     output_reco_particles = {}
     output_reco_particles["REC::Particles.pid"] = event_data["reconstructed_particles"]["REC::Particles.pid"]
-    output_reco_particles["REC::Particles.px"] = scale_data(event_data["reconstructed_particles"]["REC::Particles.px"], sector, "REC::Particles.px")
-    output_reco_particles["REC::Particles.py"] = scale_data(event_data["reconstructed_particles"]["REC::Particles.py"], sector, "REC::Particles.py")
-    output_reco_particles["REC::Particles.pz"] = scale_data(event_data["reconstructed_particles"]["REC::Particles.pz"], sector, "REC::Particles.pz")
+    output_reco_particles["REC::Particles.p"] = scale_data(event_data["reconstructed_particles"]["REC::Particles.p"], sector, "REC::Particles.p")
 
     for key, value in output_reco_particles.items():
         if "pid" in key:
@@ -399,32 +420,36 @@ def save_data(event_data, save_dir, file_name, sector):
 
     output_trajectories = {}
 
+    # Need to combine these into one trajectory
     RICH_aerogel_b1_mask = event_data["trajectories"]["REC::Traj.layer"]==2
-    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.x"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.x"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.x")
-    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.y"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.y"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.y")
-    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.z"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.z"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.z")
-    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.cx"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.cx"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.cx")
-    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.cy"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.cy"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.cy")
-    output_trajectories["trajectories/RICH_aerogel_b1/REC::Traj.cz"] = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.cz"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.cz")
+    b1_x = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.x"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.x")
+    b1_y = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.y"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.y")
+    b1_cx = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.cx"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.cx")
+    b1_cy = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.cy"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.cy")
+    b1_cz = scale_data(event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.cz"], sector, "trajectories/RICH_aerogel_b1/REC::Traj.cz")
 
     RICH_aerogel_b2_mask = event_data["trajectories"]["REC::Traj.layer"]==3
-    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.x"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.x"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.x")
-    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.y"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.y"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.y")
-    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.z"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.z"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.z")
-    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.cx"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.cx"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.cx")
-    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.cy"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.cy"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.cy")
-    output_trajectories["trajectories/RICH_aerogel_b2/REC::Traj.cz"] = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.cz"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.cz")
+    b2_x = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.x"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.x")
+    b2_y = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.y"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.y")
+    b2_cx = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.cx"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.cx")
+    b2_cy = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.cy"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.cy")
+    b2_cz = scale_data(event_data["trajectories"][RICH_aerogel_b2_mask]["REC::Traj.cz"], sector, "trajectories/RICH_aerogel_b2/REC::Traj.cz")
 
     RICH_aerogel_b3_mask = event_data["trajectories"]["REC::Traj.layer"]==4
-    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.x"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.x"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.x")
-    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.y"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.y"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.y")
-    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.z"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.z"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.z")
-    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.cx"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.cx"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.cx")
-    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.cy"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.cy"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.cy")
-    output_trajectories["trajectories/RICH_aerogel_b3/REC::Traj.cz"] = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.cz"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.cz")
+    b3_x = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.x"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.x")
+    b3_y = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.y"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.y")
+    b3_cx = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.cx"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.cx")
+    b3_cy = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.cy"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.cy")
+    b3_cz = scale_data(event_data["trajectories"][RICH_aerogel_b3_mask]["REC::Traj.cz"], sector, "trajectories/RICH_aerogel_b3/REC::Traj.cz")
+
+    output_trajectories["REC::Traj.x "] = np.concatenate((b1_x, b2_x, b3_x), axis=1)
+    output_trajectories["REC::Traj.y "] = np.concatenate((b1_y, b2_y, b3_y), axis=1)
+    output_trajectories["REC::Traj.cx"] = np.concatenate((b1_cx, b2_cx, b3_cx), axis=1)
+    output_trajectories["REC::Traj.cy"] = np.concatenate((b1_cy, b2_cy, b3_cy), axis=1)
+    output_trajectories["REC::Traj.cz"] = np.concatenate((b1_cz, b2_cz, b3_cz), axis=1)
 
     for key, value in output_trajectories.items():
-        dset = output_file.create_dataset(key, (len(value),), dtype=float_type)
+        dset = output_file.create_dataset(f"trajectories/{key}", (len(value),), dtype=float_type)
         dset[...] = value
 
 def main():
