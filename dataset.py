@@ -37,11 +37,15 @@ class H5Dataset(Dataset):
         aerogel_event = np.stack([self.rec_traj[idx][feature] for feature in trajectory_feature_names], axis=1)
 
         globals_event = ak.flatten(np.hstack([particle_momenta_event, aerogel_event]))
+
+        reconstructed_pid = np.stack([self.rec_particles[idx][feature] for feature in ["REC::Particles.pid"]], axis=1)
+        reconstructed_pid = ak.flatten(reconstructed_pid)
+        reconstructed_pid = torch.tensor(reconstructed_pid, dtype=torch.long)
         label = self.labels[idx]
         label = torch.tensor(label, dtype=torch.float32)
         sample = torch.tensor(RICH_hits_event, dtype=torch.float32)
         globals_event = torch.tensor(globals_event, dtype=torch.float32)
-        return sample, label, globals_event
+        return sample, label, globals_event, reconstructed_pid
 
     def __del__(self):
         # Close the file when dataset is destroyed
