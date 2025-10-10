@@ -6,6 +6,7 @@ import os
 from utils import LoadYaml
 from torch.nn.utils.rnn import pad_sequence
 import torch.nn.functional as F
+import time
 def parse_arguments():
     parser = argparse.ArgumentParser()
     
@@ -34,7 +35,7 @@ def parse_arguments():
 
 def collate_fn(batch):
     # batch is a list of (hits, label, globals_event) tuples
-    hits, labels, globals_event = zip(*batch)
+    hits, labels, globals_event, reco_pid = zip(*batch)
 
     # hits is a list of tensors with shape [num_hits, 3]
     lengths = [h.size(0) for h in hits]
@@ -51,8 +52,8 @@ def collate_fn(batch):
     # stack labels and globals_event
     labels = torch.stack(labels)              # (B, ...)
     globals_event = torch.stack(globals_event)  # (B, ...)
-
-    return hits_padded, labels, globals_event, mask
+    reco_pid = torch.stack(reco_pid)
+    return hits_padded, labels, globals_event, mask, reco_pid
 
 def main():
     flags = parse_arguments()
@@ -78,17 +79,21 @@ def main():
         k=training_parameters.get("k",16)
     ).to(device)
     # --- Optimizer + Loss ---
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.BCEWithLogitsLoss()
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     checkpoint_dir = os.path.join(training_parameters["MODEL_SAVE_DIRECTORY"], "checkpoints")
     os.makedirs(checkpoint_dir, exist_ok=True)
     print("Starting training")
 
+    all_epoch_losses = []
+    training_time = time.time()
     for epoch in range(training_parameters.get("EPOCHS", 10)):
         print(f"Starting epoch {epoch}")
+        epoch_start_time = time.time()
         running_loss = 0.0
-        for hits_padded, labels, globals_event, mask in dataloader:
+        batch_losses = []
+        for hits_padded, labels, globals_event, mask, _ in dataloader:
             hits_padded = hits_padded.to(device)
             labels = labels.to(device)
             globals_event = globals_event.to(device)
@@ -101,9 +106,16 @@ def main():
             optimizer.step() # Updating parameters
 
             running_loss += loss.item()
+            batch_losses.append(loss.item())  # store batch loss
 
         avg_loss = running_loss / len(dataloader)
         print(f"Epoch {epoch+1}/{training_parameters.get('EPOCHS', 10)} - Loss: {avg_loss:.4f}")
+        print(f"Epoch {epoch} took {time.time() - epoch_start_time} s")
+        all_epoch_losses.append({
+            "epoch": epoch + 1,
+            "average_loss": avg_loss,
+            "batch_losses": batch_losses
+        })
 
         # --- Save checkpoint every epoch ---
         checkpoint_path = os.path.join(checkpoint_dir, f"model_epoch{epoch+1}.pth")
@@ -114,6 +126,12 @@ def main():
     final_model_path = os.path.join(training_parameters["MODEL_SAVE_DIRECTORY"], "final_model.pth")
     torch.save(model.state_dict(), final_model_path)
     print(f"Training complete. Final model saved to {final_model_path}")
+
+    # --- Save loss history ---
+    loss_file = os.path.join(training_parameters["MODEL_SAVE_DIRECTORY"], "training_losses.pt")
+    torch.save(all_epoch_losses, loss_file)
+    print(f"Training losses saved to {loss_file}")
+    print(f"Training took {time.time() - training_time} s")
 
 if __name__ == "__main__":
     main()
