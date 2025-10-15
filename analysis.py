@@ -9,7 +9,8 @@ model_dir = "//volatile/clas12/rmilton/RICH_models/RICH_sector4_positives_kaons_
 
 losses = torch.load(model_dir+"/training_losses.pt")
 loss_epochs = [losses[i]["epoch"] for i in range(len(losses))]
-loss_per_epoch = [losses[i]["average_loss"] for i in range(len(losses))]
+train_loss_per_epoch = [losses[i]["train_loss"] for i in range(len(losses))]
+validation_loss_per_epoch = [losses[i]["val_loss"] for i in range(len(losses))]
 
 predictions = torch.load(model_dir+"/test_predictions.pt")
 model_probabilities = predictions["probabilities"].cpu().detach().numpy()
@@ -27,10 +28,12 @@ model_probabilities_for_pions = model_probabilities[:, 1]
 
 # Loss curve
 figure_loss = plt.figure(figsize=(12,8))
-plt.plot(loss_epochs, loss_per_epoch)
+plt.plot(loss_epochs, train_loss_per_epoch, label="Training")
+plt.plot(loss_epochs, validation_loss_per_epoch, label="Validation")
 plt.xlabel("Epoch")
 plt.ylabel("Loss (BCEWithLogits)")
 plt.title("RICH Sector 4 positives, 100 Epochs")
+plt.legend()
 plt.savefig('losses.png')
 
 # Momentum distribution

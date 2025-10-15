@@ -1,4 +1,4 @@
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from dataset import H5Dataset
 import torch
 import argparse
@@ -66,8 +66,24 @@ def main():
         data_parameters["SAVE_FILE_NAME"]+"_train.h5"
         )
 
-    training_dataset = H5Dataset(data_path)
-    dataloader = DataLoader(training_dataset, batch_size=training_parameters.get("BATCH_SIZE",64), shuffle=True, collate_fn=collate_fn)
+    full_dataset = H5Dataset(data_path)
+    val_fraction = training_parameters.get("VALIDATION_SPLIT", 0.2)
+    val_size = int(len(full_dataset) * val_fraction)
+    train_size = len(full_dataset) - val_size
+    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=training_parameters.get("BATCH_SIZE", 64), 
+        shuffle=True, 
+        collate_fn=collate_fn
+    )
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=training_parameters.get("BATCH_SIZE", 64), 
+        shuffle=False, 
+        collate_fn=collate_fn
+    )
 
     print("Setting up model")
     from model import GravNetModel   # wherever your model is defined
@@ -86,14 +102,15 @@ def main():
     os.makedirs(checkpoint_dir, exist_ok=True)
     print("Starting training")
 
-    all_epoch_losses = []
+    all_epoch_metrics = []
     training_time = time.time()
     for epoch in range(training_parameters.get("EPOCHS", 10)):
         print(f"Starting epoch {epoch}")
         epoch_start_time = time.time()
-        running_loss = 0.0
-        batch_losses = []
-        for hits_padded, labels, globals_event, mask, _ in dataloader:
+        
+        model.train()
+        train_loss = 0.0
+        for hits_padded, labels, globals_event, mask, _ in train_loader:
             hits_padded = hits_padded.to(device)
             labels = labels.to(device)
             globals_event = globals_event.to(device)
@@ -105,16 +122,31 @@ def main():
             loss.backward() # Calculating gradients
             optimizer.step() # Updating parameters
 
-            running_loss += loss.item()
-            batch_losses.append(loss.item())  # store batch loss
+            train_loss += loss.item()
+        avg_train_loss = train_loss / len(train_loader)
 
-        avg_loss = running_loss / len(dataloader)
-        print(f"Epoch {epoch+1}/{training_parameters.get('EPOCHS', 10)} - Loss: {avg_loss:.4f}")
-        print(f"Epoch {epoch} took {time.time() - epoch_start_time} s")
-        all_epoch_losses.append({
+        model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for hits_padded, labels, globals_event, mask, _ in val_loader:
+                hits_padded = hits_padded.to(device)
+                labels = labels.to(device)
+                globals_event = globals_event.to(device)
+                mask = mask.to(device)
+
+                outputs = model(hits_padded, globals_event, mask)
+                loss = criterion(outputs, labels)
+                val_loss += loss.item()
+
+        avg_val_loss = val_loss / len(val_loader)
+
+        print(f"Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+        print(f"Epoch time: {time.time() - epoch_start_time:.2f}s")
+
+        all_epoch_metrics.append({
             "epoch": epoch + 1,
-            "average_loss": avg_loss,
-            "batch_losses": batch_losses
+            "train_loss": avg_train_loss,
+            "val_loss": avg_val_loss
         })
 
         # --- Save checkpoint every epoch ---
@@ -129,7 +161,7 @@ def main():
 
     # --- Save loss history ---
     loss_file = os.path.join(training_parameters["MODEL_SAVE_DIRECTORY"], "training_losses.pt")
-    torch.save(all_epoch_losses, loss_file)
+    torch.save(all_epoch_metrics, loss_file)
     print(f"Training losses saved to {loss_file}")
     print(f"Training took {time.time() - training_time} s")
 
