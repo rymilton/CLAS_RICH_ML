@@ -12,3 +12,5 @@ The main workflow is as follows:
 2. Run training with [train.py](https://github.com/rymilton/CLAS_RICH_ML/blob/main/train.py)
 3. Run inference with [inference.py](https://github.com/rymilton/CLAS_RICH_ML/blob/main/inference.py)
 4. Run analysis with [analysis.py](https://github.com/rymilton/CLAS_RICH_ML/blob/main/analysis.py)
+
+To compile the `RICH_hipo2root.cxx` code, you can do the following on the farm: `g++ RICH_hipo2root.cxx -o RICH_hipo2root     -I/u/scigroup/cvmfs/hallb/clas12/sw/almalinux9-gcc11/local/hipo/4.2.0/include/hipo4     -L/u/scigroup/cvmfs/hallb/clas12/sw/almalinux9-gcc11/local/hipo/4.2.0/lib     -lhipo4 `root-config --cflags --libs``
