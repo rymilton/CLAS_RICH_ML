@@ -71,6 +71,18 @@ struct rich_ring_holder {
     }
 };
 
+struct rich_particle_holder {
+    std::vector<short> hindex, emqua, best_PID;
+    std::vector<int> id, pindex, emilay, emico, enico;
+    std::vector<float> mchi2, mass, RQ, ReQ;
+
+    void clear() {
+        hindex.clear(); emqua.clear(); best_PID.clear();
+        id.clear(); pindex.clear(); emilay.clear(); emico.clear(); enico.clear();
+        mchi2.clear(); mass.clear(); RQ.clear(); ReQ.clear();
+    }
+};
+
 struct mc_particle_holder {
     std::vector<int> pid;
     std::vector<float> px, py, pz;
@@ -104,6 +116,7 @@ int main(int argc, char** argv) {
     hipo::bank rec_traj_bank(factory.getSchema("REC::Traj"));
     hipo::bank rich_hit_bank(factory.getSchema("RICH::Hit"));
     hipo::bank rich_ring_bank(factory.getSchema("RICH::Ring"));
+    hipo::bank rich_particles_bank(factory.getSchema("RICH::Particle"));
     hipo::bank mc_particle_bank(factory.getSchema("MC::Particle"));
 
     TFile outfile(outputDir+inputFile + TString(".root"), "RECREATE");
@@ -113,6 +126,7 @@ int main(int argc, char** argv) {
     rec_traj_holder recTraj;
     rich_hit_holder richHits;
     rich_ring_holder richRing;
+    rich_particle_holder richParticle;
     mc_particle_holder mcParticles;
 
     // REC::Particles branches
@@ -173,6 +187,18 @@ int main(int argc, char** argv) {
     tree.Branch("RICH::Ring.dangle", &richRing.dangle);
     tree.Branch("RICH::Ring.layers", &richRing.layers);
     tree.Branch("RICH::Ring.compos", &richRing.compos);
+
+    tree.Branch("RICH::Particle.hindex", &richParticle.hindex);
+    tree.Branch("RICH::Particle.emqua", &richParticle.emqua);
+    tree.Branch("RICH::Particle.best_PID", &richParticle.best_PID);
+    tree.Branch("RICH::Particle.id", &richParticle.id);
+    tree.Branch("RICH::Particle.pindex", &richParticle.pindex);
+    tree.Branch("RICH::Particle.emilay", &richParticle.emilay);
+    tree.Branch("RICH::Particle.emico", &richParticle.emico);
+    tree.Branch("RICH::Particle.enico", &richParticle.enico);
+    tree.Branch("RICH::Particle.mchi2", &richParticle.mchi2);
+    tree.Branch("RICH::Particle.RQ", &richParticle.RQ);
+    tree.Branch("RICH::Particle.ReQ", &richParticle.ReQ);
 
     tree.Branch("MC::Particle.pid", &mcParticles.pid);
     tree.Branch("MC::Particle.px", &mcParticles.px);
@@ -267,6 +293,26 @@ int main(int argc, char** argv) {
             richRing.etaC.push_back(rich_ring_bank.getFloat("etaC", row));
             richRing.prob.push_back(rich_ring_bank.getFloat("prob", row));
             richRing.dangle.push_back(rich_ring_bank.getFloat("dangle", row));
+        }
+
+        event.getStructure(rich_particles_bank);
+        nrows = rich_particles_bank.getRows();
+        for (int row = 0; row < nrows; row++) {
+            richParticle.hindex.push_back(rich_particles_bank.getShort("hindex", row));
+            richParticle.emqua.push_back(rich_particles_bank.getShort("emqua", row));
+            richParticle.best_PID.push_back(rich_particles_bank.getShort("best_PID", row));
+
+            richParticle.id.push_back(rich_particles_bank.getInt("id", row));
+            richParticle.pindex.push_back(rich_particles_bank.getInt("pindex", row));
+            richParticle.emilay.push_back(rich_particles_bank.getInt("emilay", row));
+            richParticle.emico.push_back(rich_particles_bank.getInt("emico", row));
+            richParticle.enico.push_back(rich_particles_bank.getInt("enico", row));
+
+            richParticle.mchi2.push_back(rich_particles_bank.getFloat("mchi2", row));
+            richParticle.mass.push_back(rich_particles_bank.getFloat("mass", row));
+            richParticle.RQ.push_back(rich_particles_bank.getFloat("RQ", row));
+            richParticle.ReQ.push_back(rich_particles_bank.getFloat("ReQ", row));
+
         }
 
         event.getStructure(mc_particle_bank);
