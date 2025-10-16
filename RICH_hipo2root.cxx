@@ -219,6 +219,7 @@ int main(int argc, char** argv) {
         recTraj.clear();
         richHits.clear();
         richRing.clear();
+        richParticle.clear();
         mcParticles.clear();
 
         event.getStructure(rec_particles_bank);
