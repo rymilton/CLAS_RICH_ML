@@ -130,14 +130,19 @@ axs_pions_RQ = axs_pions_RQ.flatten()
 # For the track in each event, we have the RICH pid and the confidence in that PID
 # So for every event we want to get TRUE pions, and see how often it calls it a pion or how often it calls it something else
 
+RICH_pid_for_true_pions_per_momentum = []
+RICH_RQ_for_true_pions_per_momentum = []
 for i in range(len(momentum_bins)-1):
     lower_bin, upper_bin = momentum_bins[i], momentum_bins[i+1]
     momentum_mask = (reconstructed_momentum>=lower_bin) & (reconstructed_momentum < upper_bin)
     kaon_events_mask_momentum_bin = kaon_events_mask[momentum_mask]
     pion_events_mask_momentum_bin = pion_events_mask[momentum_mask]
 
-    RICH_pid_for_true_pions = RICH_PID[momentum_mask][pion_events_mask_momentum_bin]
-    RICH_RQ_for_true_pions = RICH_RQ[momentum_mask][pion_events_mask_momentum_bin]
+    RICH_pid_for_true_pions = np.array(RICH_PID[momentum_mask][pion_events_mask_momentum_bin])
+    RICH_RQ_for_true_pions = np.array(RICH_RQ[momentum_mask][pion_events_mask_momentum_bin])
+
+    RICH_pid_for_true_pions_per_momentum.append(RICH_pid_for_true_pions)
+    RICH_RQ_for_true_pions_per_momentum.append(RICH_RQ_for_true_pions)
 
     RICH_pionsRQ_for_true_pions = RICH_RQ_for_true_pions[RICH_pid_for_true_pions==211]
     RICH_kaonsRQ_for_true_pions = RICH_RQ_for_true_pions[RICH_pid_for_true_pions==321]
@@ -164,6 +169,8 @@ for i in range(len(momentum_bins)-1):
 plt.tight_layout()
 plt.savefig('RQ_pion.png')
 
+RICH_pid_for_true_kaons_per_momentum = []
+RICH_RQ_for_true_kaons_per_momentum = []
 fig_kaons_RQ, axs_kaons_RQ = plt.subplots(nrows=5, ncols=2, figsize=(10,16))
 axs_kaons_RQ = axs_kaons_RQ.flatten()
 for i in range(len(momentum_bins)-1):
@@ -171,8 +178,10 @@ for i in range(len(momentum_bins)-1):
     momentum_mask = (reconstructed_momentum>=lower_bin) & (reconstructed_momentum < upper_bin)
     kaon_events_mask_momentum_bin = kaon_events_mask[momentum_mask]
 
-    RICH_pid_for_true_kaons = RICH_PID[momentum_mask][kaon_events_mask_momentum_bin]
-    RICH_RQ_for_true_kaons = RICH_RQ[momentum_mask][kaon_events_mask_momentum_bin]
+    RICH_pid_for_true_kaons = np.array(RICH_PID[momentum_mask][kaon_events_mask_momentum_bin])
+    RICH_RQ_for_true_kaons = np.array(RICH_RQ[momentum_mask][kaon_events_mask_momentum_bin])
+    RICH_pid_for_true_kaons_per_momentum.append(RICH_pid_for_true_kaons)
+    RICH_RQ_for_true_kaons_per_momentum.append(RICH_RQ_for_true_kaons)
 
     RICH_pionsRQ_for_true_kaons = RICH_RQ_for_true_kaons[RICH_pid_for_true_kaons==211]
     RICH_kaonsRQ_for_true_kaons = RICH_RQ_for_true_kaons[RICH_pid_for_true_kaons==321]
@@ -217,8 +226,14 @@ for i, threshold in enumerate(probability_thresholds):
 
         # probabilities_per_momentum[pion_events_per_momentum] is the number of pion events in this momentum bin
         # probabilities_per_momentum[~pion_events_per_momentum] is the number of kaon events in this momentum bin
-        pion_accuracies.append(num_correct_pion_events/len(probabilities_per_momentum[pion_events_per_momentum]))
-        kaon_misidentifications.append(num_incorrect_kaon_events/len(probabilities_per_momentum[~pion_events_per_momentum]))
+        if len(probabilities_per_momentum[pion_events_per_momentum]) > 0:
+            pion_accuracies.append(num_correct_pion_events/len(probabilities_per_momentum[pion_events_per_momentum]))
+        else:
+            pion_accuracies.append(-1)
+        if len(probabilities_per_momentum[~pion_events_per_momentum]) > 0:
+            kaon_misidentifications.append(num_incorrect_kaon_events/len(probabilities_per_momentum[~pion_events_per_momentum]))
+        else:
+            kaon_misidentifications.append(-1)
 
     axs_threshold[i].scatter(momentum_bin_centers, pion_accuracies, color='r', label="$\pi^+$")
     axs_threshold[i].scatter(momentum_bin_centers, kaon_misidentifications, color='b', label="$K^+$")
@@ -231,3 +246,71 @@ for i, threshold in enumerate(probability_thresholds):
 plt.suptitle(f"RICH Sector 4 positives, 100 Epochs")
 plt.tight_layout()
 plt.savefig(f'thresholds.png')
+
+# Model efficiencies for different probability thresholds
+probability_thresholds = [0.2, 0.4, 0.6, 0.7, 0.8, 0.9]
+fig_thresholds_with_RQ, axs_threshold_with_RQ = plt.subplots(nrows=2, ncols=3, figsize=(16,10))
+axs_threshold_with_RQ = axs_threshold_with_RQ.flatten()
+for i, threshold in enumerate(probability_thresholds):
+    pion_accuracies_model, pion_accuracies_RICH = [], []
+    kaon_misidentifications_model, kaon_misidentifications_RICH = [], []
+
+    for probabilities_per_momentum, pion_events_per_momentum in zip(pion_event_probabilities, pion_mask_per_momentum):
+        threshold_mask = probabilities_per_momentum > threshold
+        probabilities_passing_threshold = probabilities_per_momentum[threshold_mask]
+        pion_events = pion_events_per_momentum[threshold_mask]
+
+        num_correct_pion_events = len(probabilities_passing_threshold[pion_events])
+        num_incorrect_kaon_events = len(probabilities_passing_threshold[~pion_events]) # num kaons that pass the pion threshold
+
+        # probabilities_per_momentum[pion_events_per_momentum] is the number of pion events in this momentum bin
+        # probabilities_per_momentum[~pion_events_per_momentum] is the number of kaon events in this momentum bin
+        if len(probabilities_per_momentum[pion_events_per_momentum])>0:
+            pion_accuracies_model.append(num_correct_pion_events/len(probabilities_per_momentum[pion_events_per_momentum]))
+        else:
+            pion_accuracies_model.append(-1)
+        
+        if len(probabilities_per_momentum[~pion_events_per_momentum])>0:
+            kaon_misidentifications_model.append(num_incorrect_kaon_events/len(probabilities_per_momentum[~pion_events_per_momentum]))
+        else:
+            kaon_misidentifications_model.append(-1)
+    
+    for RQ_for_pions, PID_for_pions, RQ_for_kaons, PID_for_kaons in zip(RICH_RQ_for_true_pions_per_momentum, RICH_pid_for_true_pions_per_momentum, RICH_RQ_for_true_kaons_per_momentum, RICH_pid_for_true_kaons_per_momentum):
+        threshold_mask_pions = RQ_for_pions > threshold
+        RQ_passing_threshold_pions = RQ_for_pions[threshold_mask_pions]
+        PID_passing_threshold_pions = PID_for_pions[threshold_mask_pions]
+
+        num_correct_pion_events = np.sum(PID_passing_threshold_pions==211)
+        total_pion_events = len(RQ_for_pions)
+        if total_pion_events > 0:
+            pion_accuracies_RICH.append(num_correct_pion_events/total_pion_events)
+        else:
+            pion_accuracies_RICH.append(-1)
+
+        threshold_mask_kaons = RQ_for_kaons > threshold
+        RQ_passing_threshold_kaons = RQ_for_kaons[threshold_mask_kaons]
+        PID_passing_threshold_kaons = PID_for_kaons[threshold_mask_kaons]
+
+        num_incorrect_kaon_events = np.sum(PID_passing_threshold_kaons==211)
+        total_kaon_events = len(RQ_for_kaons)
+        if total_kaon_events > 0:
+            kaon_misidentifications_RICH.append(num_incorrect_kaon_events/total_kaon_events)
+        else:
+            kaon_misidentifications_RICH.append(-1)
+        
+        # When >threshold, how many true kaon events are called a pion
+        # When >threshold, how many true pion events are called a pion
+
+    axs_threshold_with_RQ[i].scatter(momentum_bin_centers, pion_accuracies_model, color='r', label="ML $\pi^+$")
+    axs_threshold_with_RQ[i].scatter(momentum_bin_centers, kaon_misidentifications_model, color='b', label="ML $K^+$")
+    axs_threshold_with_RQ[i].scatter(momentum_bin_centers, pion_accuracies_RICH, color='r',marker='s',facecolor='none', label="RICH $\pi^+$")
+    axs_threshold_with_RQ[i].scatter(momentum_bin_centers, kaon_misidentifications_RICH, color='b', marker='s',facecolor='none', label="RICH $K^+$")
+    axs_threshold_with_RQ[i].set_xlabel("p (GeV)", fontsize=12)
+    axs_threshold_with_RQ[i].set_ylabel("Efficiency of passing $\pi^+$ cut", fontsize=12)
+    axs_threshold_with_RQ[i].legend(fontsize=12)
+    axs_threshold_with_RQ[i].set_title(f"Probability Threshold = {threshold}", fontsize=12)
+    axs_threshold_with_RQ[i].set_ylim(-.1,1.1)
+    axs_threshold_with_RQ[i].grid()
+# plt.suptitle(f"RICH Sector 4 positives, 100 Epochs")
+plt.tight_layout()
+plt.savefig(f'thresholds_with_RQ.png')
