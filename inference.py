@@ -32,17 +32,28 @@ def parse_arguments():
     return parser.parse_args()
 
 def collate_fn(batch):
-    hits, labels, globals_event, reco_pid = zip(*batch)
+    # batch is a list of (hits, label, globals_event) tuples
+    hits, labels, globals_event, reco_pid, RICH_PID, RICH_RQ = zip(*batch)
+
+    # hits is a list of tensors with shape [num_hits, 3]
     lengths = [h.size(0) for h in hits]
-    hits_padded = pad_sequence(hits, batch_first=True)
+
+    # pad hits to the longest event
+    hits_padded = pad_sequence(hits, batch_first=True)  # (B, max_len, 3)
+
+    # make mask: 1 for real hit, 0 for pad
     max_len = hits_padded.size(1)
     mask = torch.zeros(len(hits), max_len, dtype=torch.bool)
     for i, length in enumerate(lengths):
         mask[i, :length] = 1
-    labels = torch.stack(labels)
-    globals_event = torch.stack(globals_event)
+
+    # stack labels and globals_event
+    labels = torch.stack(labels)              # (B, ...)
+    globals_event = torch.stack(globals_event)  # (B, ...)
     reco_pid = torch.stack(reco_pid)
-    return hits_padded, labels, globals_event, mask, reco_pid
+    RICH_PID = torch.stack(RICH_PID)
+    RICH_RQ = torch.stack(RICH_RQ)
+    return hits_padded, labels, globals_event, mask, reco_pid, RICH_PID, RICH_RQ
 
 def main():
     flags = parse_arguments()
@@ -80,11 +91,12 @@ def main():
     all_probabilities = []
     all_labels = []
     all_reco_pid = []
+    all_RICH_pid, all_RICH_RQ = [], []
     all_momentum = []
 
     print("Making predictions")
     with torch.no_grad():
-        for hits_padded, labels, globals_event, mask, reco_pid in dataloader:
+        for hits_padded, labels, globals_event, mask, reco_pid, RICH_PID, RICH_RQ in dataloader:
             hits_padded = hits_padded.to(device)
             globals_event = globals_event.to(device)
             mask = mask.to(device)
@@ -100,6 +112,8 @@ def main():
             all_probabilities.append(probs.cpu())
             all_labels.append(labels)  # optional, if you want to compare
             all_reco_pid.append(reco_pid)
+            all_RICH_pid.append(RICH_PID)
+            all_RICH_RQ.append(RICH_RQ)
             
 
     print("Done with predictions. Saving.")
@@ -108,6 +122,8 @@ def main():
     all_labels = torch.cat(all_labels)
     all_reco_pid = torch.cat(all_reco_pid)
     all_momentum = torch.cat(all_momentum)
+    all_RICH_pid = torch.cat(all_RICH_pid)
+    all_RICH_RQ = torch.cat(all_RICH_RQ)
 
     # --- Save predictions ---
     output_file = os.path.join(training_parameters["MODEL_SAVE_DIRECTORY"], "test_predictions.pt")
@@ -115,6 +131,8 @@ def main():
         "probabilities": all_probabilities,
         "labels": all_labels,
         "reco_pid": all_reco_pid,
+        "RICH_PID": all_RICH_pid,
+        "RICH_RQ": all_RICH_RQ,
         "reco_momentum":all_momentum
     }, output_file)
 

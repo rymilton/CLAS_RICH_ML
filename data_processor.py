@@ -34,6 +34,7 @@ def open_file(file_list):
         "trajectories": ak.Array([]),
         "truth_particles": ak.Array([]),
         "reconstructed_particles": ak.Array([]),
+        "RICH_particles": ak.Array([]),
     }
     for i, file in enumerate(file_list):
         if i%10==0:
@@ -43,6 +44,7 @@ def open_file(file_list):
             event_dictionary["trajectories"] = ak.concatenate((event_dictionary["trajectories"], f.arrays(filter_name="REC::Traj.*")))
             event_dictionary["truth_particles"] = ak.concatenate((event_dictionary["truth_particles"], f.arrays(filter_name="MC::Particle.*")))
             event_dictionary["reconstructed_particles"] = ak.concatenate((event_dictionary["reconstructed_particles"], f.arrays(filter_name="REC::Particles.*")))
+            event_dictionary["RICH_particles"] = ak.concatenate((event_dictionary["RICH_particles"], f.arrays(filter_name="RICH::Particle.*")))
     return ak.Array(event_dictionary)
 
 def select_hits(
@@ -81,7 +83,7 @@ def select_hits(
     trajectory_sector_mask = trajectories["REC::Traj.x"] > 0 if sector == 1 else trajectories["REC::Traj.x"] < 0
     event_data["trajectories"] = event_data["trajectories"][(RICH_trajectory_mask) & (trajectory_sector_mask)]
 
-    # If the maximum number of trajectories is set, removing events with more than max_num_trajectories in RICH
+    # If the maximum number of trajectories is set, removing events with more than max_num_trajectories in the RICH in desired sector
     unique_pindex = [np.unique(event_pindices).to_list() for event_pindices in event_data["trajectories"]["REC::Traj.pindex"]]
     if max_num_trajectories is not None:
         num_trajectories = ak.num(unique_pindex, axis=1)
@@ -98,6 +100,9 @@ def select_hits(
     unique_pindex = [np.unique(event_pindices).to_list() for event_pindices in event_data["trajectories"]["REC::Traj.pindex"]]
     event_data["reconstructed_particles"] = event_data["reconstructed_particles"][unique_pindex]
 
+    # Keeping only RICH particles that match the pindices from trajectories
+    # There are some events where there are a different number of RICH pindices from the REC::Traj bank
+    event_data["RICH_particles"] = event_data["RICH_particles"][event_data["RICH_particles"]["RICH::Particle.pindex"]==np.array(unique_pindex)]
     # Removing neutral particles from reconstructed data
     neutral_mask = (event_data["reconstructed_particles"]["REC::Particles.charge"] > 0 ) | (event_data["reconstructed_particles"]["REC::Particles.charge"] < 0)
     event_data["reconstructed_particles"] = event_data["reconstructed_particles"][neutral_mask]
@@ -452,12 +457,35 @@ def save_data(event_data, save_dir, file_name, sector):
         dset = output_file.create_dataset(f"trajectories/{key}", (len(value),), dtype=float_type)
         dset[...] = value
 
+    # Padding events with 0 entries to contain np.nan instead
+    num_rich_particles = ak.num(event_data["RICH_particles"]["RICH::Particle.best_PID"], axis=1)
+
+    # ak.where does this: output[i] = x[i] if condition[i] else y[i]
+    best_pid_padded = ak.where(
+        num_rich_particles == 0, # condition[i]
+        ak.Array([[np.nan]] * len(num_rich_particles)), # x[i]
+        event_data["RICH_particles"]["RICH::Particle.best_PID"] # y[i]
+    )
+    RQ_padded = ak.where(
+        num_rich_particles == 0,
+        ak.Array([[np.nan]] * len(num_rich_particles)),
+        event_data["RICH_particles"]["RICH::Particle.RQ"]
+    )
+
+    output_RICH_particles = {}
+    output_RICH_particles["RICH::Particle.best_PID"] = best_pid_padded
+    output_RICH_particles["RICH::Particle.RQ"] = RQ_padded
+
+    for key, value in output_RICH_particles.items():
+        dset = output_file.create_dataset(f"RICH_particles/{key}", (len(value),), dtype=float_type)
+        dset[...] = value
+
 def main():
     flags = parse_arguments()
     data_parameters = LoadYaml(flags.config, flags.config_directory)
     if data_parameters["SECTOR"] != 1 and data_parameters["SECTOR"] != 4:
         raise ValueError("SECTOR must be set to either 1 or 4 in data.yaml!")
-    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")
+    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")[:100]
     data = open_file(data_files)
     data = select_hits(
         data,

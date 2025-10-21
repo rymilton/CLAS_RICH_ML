@@ -11,7 +11,7 @@ class H5Dataset(Dataset):
         self.data = h5.File(self.data_file, 'r')
 
         # Storing our data in Awkward arrays
-        self.RICH_hits, self.rec_traj, self.rec_particles = {}, {}, {}
+        self.RICH_hits, self.rec_traj, self.rec_particles, self.RICH_particles = {}, {}, {}, {}
         for entry in list(self.data["RICH_Hits"].keys()):
             self.RICH_hits[entry] = self.data[f"RICH_Hits/{entry}"][:].tolist()
         self.RICH_hits = ak.Array(self.RICH_hits)
@@ -21,6 +21,10 @@ class H5Dataset(Dataset):
         for entry in list(self.data["reconstructed_particles"].keys()):
             self.rec_particles[entry] = self.data[f"reconstructed_particles/{entry}"][:].tolist()
         self.rec_particles = ak.Array(self.rec_particles)
+        for entry in list(self.data["RICH_particles"].keys()):
+            self.RICH_particles[entry] = self.data[f"RICH_particles/{entry}"][:].tolist()
+        self.RICH_particles = ak.Array(self.RICH_particles)
+
         self.labels = ak.Array(self.data[f"truth_particles/MC::Particle.pid"][:].tolist())
 
     def __len__(self):
@@ -41,11 +45,15 @@ class H5Dataset(Dataset):
         reconstructed_pid = np.stack([self.rec_particles[idx][feature] for feature in ["REC::Particles.pid"]], axis=1)
         reconstructed_pid = ak.flatten(reconstructed_pid)
         reconstructed_pid = torch.tensor(reconstructed_pid, dtype=torch.long)
+
+        RICH_particle_features = np.stack([self.RICH_particles[idx][feature] for feature in ["RICH::Particle.best_PID", "RICH::Particle.RQ"]], axis=1)
+        RICH_pid = torch.tensor(RICH_particle_features[:,0], dtype=torch.float32)
+        RICH_RQ = torch.tensor(RICH_particle_features[:,1], dtype=torch.float32)
         label = self.labels[idx]
         label = torch.tensor(label, dtype=torch.float32)
         sample = torch.tensor(RICH_hits_event, dtype=torch.float32)
         globals_event = torch.tensor(globals_event, dtype=torch.float32)
-        return sample, label, globals_event, reconstructed_pid
+        return sample, label, globals_event, reconstructed_pid, RICH_pid, RICH_RQ
 
     def __del__(self):
         # Close the file when dataset is destroyed

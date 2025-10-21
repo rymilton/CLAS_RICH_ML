@@ -35,7 +35,7 @@ def parse_arguments():
 
 def collate_fn(batch):
     # batch is a list of (hits, label, globals_event) tuples
-    hits, labels, globals_event, reco_pid = zip(*batch)
+    hits, labels, globals_event, reco_pid, RICH_pid, RICH_RQ = zip(*batch)
 
     # hits is a list of tensors with shape [num_hits, 3]
     lengths = [h.size(0) for h in hits]
@@ -53,7 +53,9 @@ def collate_fn(batch):
     labels = torch.stack(labels)              # (B, ...)
     globals_event = torch.stack(globals_event)  # (B, ...)
     reco_pid = torch.stack(reco_pid)
-    return hits_padded, labels, globals_event, mask, reco_pid
+    RICH_pid = torch.stack(RICH_pid)
+    RICH_RQ = torch.stack(RICH_RQ)
+    return hits_padded, labels, globals_event, mask, reco_pid, RICH_pid, RICH_RQ
 
 def main():
     flags = parse_arguments()
@@ -110,7 +112,7 @@ def main():
         
         model.train()
         train_loss = 0.0
-        for hits_padded, labels, globals_event, mask, _ in train_loader:
+        for hits_padded, labels, globals_event, mask, _, _, _ in train_loader:
             hits_padded = hits_padded.to(device)
             labels = labels.to(device)
             globals_event = globals_event.to(device)
@@ -128,7 +130,7 @@ def main():
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for hits_padded, labels, globals_event, mask, _ in val_loader:
+            for hits_padded, labels, globals_event, mask, _, _, _ in val_loader:
                 hits_padded = hits_padded.to(device)
                 labels = labels.to(device)
                 globals_event = globals_event.to(device)
