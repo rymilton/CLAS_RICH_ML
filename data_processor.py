@@ -485,7 +485,7 @@ def main():
     data_parameters = LoadYaml(flags.config, flags.config_directory)
     if data_parameters["SECTOR"] != 1 and data_parameters["SECTOR"] != 4:
         raise ValueError("SECTOR must be set to either 1 or 4 in data.yaml!")
-    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")[:100]
+    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")
     data = open_file(data_files)
     data = select_hits(
         data,
