@@ -5,10 +5,13 @@ import matplotlib.pyplot as plt
 import mplhep as hep
 hep.style.use("CMS")
 from sklearn.metrics import roc_curve, auc
+import os
 
 model_dir = "/volatile/clas12/rmilton/RICH_models_LR1E-5_128hiddendimensions_200epochs_0.1validationsplit_3.15GeVmomentumcut/"
 print(model_dir)
 plot_title = "RICH Sector 4 positives p>3.15 GeV, 200 Epochs\nLR=1E-5, 128 hidden dimensions, 10% validation"
+plot_directory = "./plots/"
+os.makedirs(output_directory, exist_ok=True)
 
 # Opening the files
 losses = torch.load(model_dir+"/training_losses.pt")
@@ -40,7 +43,7 @@ plt.title(plot_title)
 plt.xlim(0, 200)
 plt.legend()
 plt.tight_layout()
-plt.savefig('losses.png')
+plt.savefig(plot_directory+'losses.png')
 
 # Momentum distribution
 figure_loss = plt.figure(figsize=(12,8))
@@ -49,7 +52,7 @@ plt.xlabel("p (GeV)")
 plt.title(plot_title)
 plt.yscale('log')
 plt.ylabel("Counts (log)")
-plt.savefig('momentum.png')
+plt.savefig(plot_directory+'momentum.png')
 
 
 # Model probabilties for kaons
@@ -88,7 +91,7 @@ plt.xlabel("Probability event contains $K^+$")
 plt.ylabel("Entries")
 plt.suptitle(plot_title)
 plt.tight_layout()
-plt.savefig('kaon_probabilties.png')
+plt.savefig(plot_directory+'kaon_probabilties.png')
 
 # Model probabilties for pions
 fig_pions, axs_pions = plt.subplots(nrows=5, ncols=2, figsize=(10,16))
@@ -129,7 +132,7 @@ for i in range(len(momentum_bins)-1):
     axs_pions[i].set_ylabel("Counts", fontsize=12)
 plt.suptitle(plot_title)
 plt.tight_layout()
-plt.savefig('pion_probabilties.png')
+plt.savefig(plot_directory+'pion_probabilties.png')
 
 # RICH RQ for pions
 fig_pions_RQ, axs_pions_RQ = plt.subplots(nrows=5, ncols=2, figsize=(10,16))
@@ -175,7 +178,7 @@ for i in range(len(momentum_bins)-1):
     axs_pions_RQ[i].set_xlabel("RQ for true $\pi$ events", fontsize=12)
     axs_pions_RQ[i].set_ylabel("Counts", fontsize=12)
 plt.tight_layout()
-plt.savefig('RQ_pion.png')
+plt.savefig(plot_directory+'RQ_pion.png')
 
 RICH_pid_for_true_kaons_per_momentum = []
 RICH_RQ_for_true_kaons_per_momentum = []
@@ -215,7 +218,7 @@ for i in range(len(momentum_bins)-1):
     axs_kaons_RQ[i].set_xlabel("RQ for true $K$ events", fontsize=12)
     axs_kaons_RQ[i].set_ylabel("Counts", fontsize=12)
 plt.tight_layout()
-plt.savefig('RQ_kaon.png')
+plt.savefig(plot_directory+'RQ_kaon.png')
 
 # Model efficiencies for different probability thresholds
 probability_thresholds = np.linspace(0,1,20)
@@ -256,7 +259,7 @@ plt.show()
 
 
 print(f"AUC = {roc_auc:.4f}")
-plt.savefig("ROC.png")
+plt.savefig(plot_directory+"ROC.png")
 
 probability_thresholds = [0.2, 0.4, 0.5, 0.7, 0.8, 0.9]
 fig_thresholds, axs_threshold = plt.subplots(nrows=2, ncols=3, figsize=(16,10))
@@ -301,7 +304,7 @@ for i, threshold in enumerate(probability_thresholds):
         # print(f"Kaon misidentifactions at threshold={threshold}:", kaon_misidentifications)
 plt.suptitle(plot_title)
 plt.tight_layout()
-plt.savefig(f'thresholds.png')
+plt.savefig(plot_directory+f'thresholds.png')
 
 # Model efficiencies for different probability thresholds
 probability_thresholds = [0.2, 0.4, 0.5, 0.7, 0.8, 0.9]
@@ -369,4 +372,4 @@ for i, threshold in enumerate(probability_thresholds):
     axs_threshold_with_RQ[i].grid()
 plt.suptitle(plot_title)
 plt.tight_layout()
-plt.savefig(f'thresholds_with_RQ.png')
+plt.savefig(plot_directory+f'thresholds_with_RQ.png')
