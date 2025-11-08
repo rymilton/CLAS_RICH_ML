@@ -74,6 +74,8 @@ def main():
     train_size = len(full_dataset) - val_size
     train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
 
+    print("TRAINING SIZE:", train_size)
+    print("VALIDATION SIZE:", val_size)
     train_loader = DataLoader(
         train_dataset, 
         batch_size=training_parameters.get("BATCH_SIZE", 64), 
@@ -94,7 +96,8 @@ def main():
         global_dim=training_parameters.get("GLOBAL_DIMENSIONS",10),
         hidden_dim=training_parameters.get("HIDDEN_DIMENSIONS",64),
         num_classes=training_parameters.get("NUMBER_CLASSES",2),
-        k=training_parameters.get("k",16)
+        k=training_parameters.get("k",16),
+        dropout_rate=training_parameters.get("DROPOUT_RATE", 0)
     ).to(device)
     # --- Optimizer + Loss ---
     criterion = torch.nn.BCEWithLogitsLoss()

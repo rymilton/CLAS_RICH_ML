@@ -73,6 +73,7 @@ def main():
         shuffle=False,
         collate_fn=collate_fn
     )
+    print("Size of test dataset:", len(test_dataset))
 
     # --- Load model ---
     from model import GravNetModel
@@ -82,7 +83,8 @@ def main():
         global_dim=training_parameters.get("GLOBAL_DIMENSIONS", 10),
         hidden_dim=training_parameters.get("HIDDEN_DIMENSIONS", 64),
         num_classes=training_parameters.get("NUMBER_CLASSES", 2),
-        k=training_parameters.get("k", 16)
+        k=training_parameters.get("k", 16),
+        dropout_rate=training_parameters.get("DROPOUT_RATE", 0)
     ).to(device)
 
     model.load_state_dict(torch.load(training_parameters["MODEL_SAVE_DIRECTORY"]+"/final_model.pth", map_location=device))
@@ -96,7 +98,7 @@ def main():
 
     print("Making predictions")
     with torch.no_grad():
-        for hits_padded, labels, globals_event, mask, reco_pid, RICH_PID, RICH_RQ in dataloader:
+        for i, (hits_padded, labels, globals_event, mask, reco_pid, RICH_PID, RICH_RQ) in enumerate(dataloader):
             hits_padded = hits_padded.to(device)
             globals_event = globals_event.to(device)
             mask = mask.to(device)
