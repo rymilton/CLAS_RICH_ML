@@ -107,6 +107,7 @@ def select_hits(
 
     # Keeping only RICH particles that match the pindices from trajectories
     # There are some events where there are a different number of RICH pindices from the REC::Traj bank
+    # These are likely particles that are within the other sector not of interest
     event_data["RICH_particles"] = event_data["RICH_particles"][event_data["RICH_particles"]["RICH::Particle.pindex"]==np.array(unique_pindex)] 
     # Removing neutral particles from reconstructed data
     neutral_mask = (event_data["reconstructed_particles"]["REC::Particles.charge"] > 0 ) | (event_data["reconstructed_particles"]["REC::Particles.charge"] < 0)
@@ -151,6 +152,11 @@ def select_hits(
     if np.any(ak.num(event_data["RICH_particles"]["RICH::Particle.pindex"], axis=1) > ak.num(event_data["reconstructed_particles"]["REC::Particles.p"], axis=1)):
         raise ValueError("RICH::Particle has more particles per event than REC::Particles!")
 
+    # Removing events with a Cherenkov angle of 0. This happens when the conventional reconstruction fails
+    invalid_cherenkov_angle_mask = event_data["RICH_particles"]["RICH::Particle.best_ch"]>0
+    event_data["RICH_particles"] = event_data["RICH_particles"][invalid_cherenkov_angle_mask]
+    # Removing events with no RICH particles.
+    event_data = event_data[ak.num(event_data["RICH_particles"]["RICH::Particle.best_ch"], axis=1)>0]
     # Checking to make sure REC::Traj and reco particles have the same number of particles always!
     if not np.array_equal(ak.num(event_data["reconstructed_particles"]["REC::Particles.p"], axis=1), ak.num(event_data["trajectories"]["REC::Traj.pindex"], axis=1)):
         raise ValueError("REC::Traj has a different number of particles per event than REC::Particles!")
@@ -521,30 +527,10 @@ def save_data(event_data, save_dir, file_name, sector):
         dset = output_file.create_dataset(f"trajectories/{key}", (len(value),), dtype=float_type)
         dset[...] = value
 
-    # Padding events with 0 entries to contain np.nan instead
-    num_rich_particles = ak.num(event_data["RICH_particles"]["RICH::Particle.best_PID"], axis=1)
-
-    # ak.where does this: output[i] = x[i] if condition[i] else y[i]
-    best_pid_padded = ak.where(
-        num_rich_particles == 0, # condition[i]
-        ak.Array([[np.nan]] * len(num_rich_particles)), # x[i]
-        event_data["RICH_particles"]["RICH::Particle.best_PID"] # y[i]
-    )
-    RQ_padded = ak.where(
-        num_rich_particles == 0,
-        ak.Array([[np.nan]] * len(num_rich_particles)),
-        event_data["RICH_particles"]["RICH::Particle.RQ"]
-    )
-    best_ch_padded = ak.where(
-        num_rich_particles == 0,
-        ak.Array([[np.nan]] * len(num_rich_particles)),
-        event_data["RICH_particles"]["RICH::Particle.best_ch"]
-    )
-
     output_RICH_particles = {}
-    output_RICH_particles["RICH::Particle.best_PID"] = best_pid_padded
-    output_RICH_particles["RICH::Particle.RQ"] = RQ_padded
-    output_RICH_particles["RICH::Particle.best_ch"] = best_ch_padded
+    output_RICH_particles["RICH::Particle.best_PID"] = event_data["RICH_particles"]["RICH::Particle.best_PID"]
+    output_RICH_particles["RICH::Particle.RQ"] = event_data["RICH_particles"]["RICH::Particle.RQ"]
+    output_RICH_particles["RICH::Particle.best_ch"] = event_data["RICH_particles"]["RICH::Particle.best_ch"]
 
     for key, value in output_RICH_particles.items():
         dset = output_file.create_dataset(f"RICH_particles/{key}", (len(value),), dtype=float_type)
