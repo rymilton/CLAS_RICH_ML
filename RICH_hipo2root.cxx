@@ -74,12 +74,12 @@ struct rich_ring_holder {
 struct rich_particle_holder {
     std::vector<short> hindex, emqua, best_PID;
     std::vector<int> id, pindex, emilay, emico, enico;
-    std::vector<float> mchi2, mass, RQ, ReQ;
+    std::vector<float> mchi2, mass, RQ, ReQ, best_ch;
 
     void clear() {
         hindex.clear(); emqua.clear(); best_PID.clear();
         id.clear(); pindex.clear(); emilay.clear(); emico.clear(); enico.clear();
-        mchi2.clear(); mass.clear(); RQ.clear(); ReQ.clear();
+        mchi2.clear(); mass.clear(); RQ.clear(); ReQ.clear(); best_ch.clear();
     }
 };
 
@@ -199,6 +199,7 @@ int main(int argc, char** argv) {
     tree.Branch("RICH::Particle.mchi2", &richParticle.mchi2);
     tree.Branch("RICH::Particle.RQ", &richParticle.RQ);
     tree.Branch("RICH::Particle.ReQ", &richParticle.ReQ);
+    tree.Branch("RICH::Particle.best_ch", &richParticle.best_ch);
 
     tree.Branch("MC::Particle.pid", &mcParticles.pid);
     tree.Branch("MC::Particle.px", &mcParticles.px);
@@ -313,6 +314,7 @@ int main(int argc, char** argv) {
             richParticle.mass.push_back(rich_particles_bank.getFloat("mass", row));
             richParticle.RQ.push_back(rich_particles_bank.getFloat("RQ", row));
             richParticle.ReQ.push_back(rich_particles_bank.getFloat("ReQ", row));
+            richParticle.best_ch.push_back(rich_particles_bank.getFloat("best_ch", row));
 
         }
 
