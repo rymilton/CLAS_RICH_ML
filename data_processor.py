@@ -380,10 +380,6 @@ def match_to_truth(event_data, max_num_trajectories = None):
     
     nonempty_particles_mask = ak.num(event_data["truth_particles"]["MC::Particle.pid"])>0
     event_data = event_data[nonempty_particles_mask]
-    if max_num_trajectories is not None:
-        print("in maybe unneeded mask")
-        num_particles_mask = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"]) <= max_num_trajectories
-        event_data = event_data[num_particles_mask]
     print(f"Have {len(event_data)} events after particle removal and reco/truth matching")
 
     # Making sure pions and kaons have the same number of events. Randomly drop events from the particle that has more
@@ -541,7 +537,7 @@ def main():
     data_parameters = LoadYaml(flags.config, flags.config_directory)
     if data_parameters["SECTOR"] != 1 and data_parameters["SECTOR"] != 4:
         raise ValueError("SECTOR must be set to either 1 or 4 in data.yaml!")
-    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")
+    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")[:10]
     data = open_file(data_files)
     data = select_hits(
         data,
