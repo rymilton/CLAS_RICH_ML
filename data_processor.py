@@ -52,7 +52,8 @@ def select_hits(
         sector,
         use_negatives = True,
         use_positives = True,
-        max_num_trajectories = None
+        max_num_trajectories = None,
+        min_hit_multiplicity = 0,
         ):
 
     print(f"Have {len(event_data)} events originally")
@@ -70,9 +71,11 @@ def select_hits(
     valid_hits_mask = (hits["RICH::Hit.cluster"] == 0) & (hits["RICH::Hit.xtalk"] == 0) & (hits["RICH::Hit.pmt"] > 0) & (hits["RICH::Hit.pmt"] < 392)
     hits_sector_mask = hits["RICH::Hit.sector"] == sector
     event_data["RICH_hits"] = event_data["RICH_hits"][(valid_hits_mask) & (hits_sector_mask)]
-    # Removing events without a valid RICH hit
-    nonempty_hits_mask = ak.num(event_data["RICH_hits"]["RICH::Hit.x"])>0
-    event_data = event_data[nonempty_hits_mask]
+    # Removing events without a valid RICH hit or events with less than minimum set hits
+    if min_hit_multiplicity < 0:
+        raise ValueError("MIN_HIT_MULTIPLICITY is set to a negative value! It should be >=0")
+    hit_multiplicity_mask = ak.num(event_data["RICH_hits"]["RICH::Hit.x"])>min_hit_multiplicity
+    event_data = event_data[hit_multiplicity_mask]
 
     print(f"Have {len(event_data)} events after removing invalid RICH hits")
 
@@ -556,6 +559,7 @@ def main():
         use_negatives = data_parameters["USE_NEGATIVE_CHARGE"],
         use_positives = data_parameters["USE_POSITIVE_CHARGE"],
         max_num_trajectories = data_parameters["MAX_NUM_TRAJECTORIES"],
+        min_hit_multiplicity = data_parameters["MIN_HIT_MULTIPLICITY"],
         )
     data = match_to_truth(
         data,
