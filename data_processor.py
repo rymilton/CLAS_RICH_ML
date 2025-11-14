@@ -102,7 +102,7 @@ def select_hits(
 
     # Keeping only RICH particles that match the pindices from trajectories
     # There are some events where there are a different number of RICH pindices from the REC::Traj bank
-    event_data["RICH_particles"] = event_data["RICH_particles"][event_data["RICH_particles"]["RICH::Particle.pindex"]==np.array(unique_pindex)]
+    event_data["RICH_particles"] = event_data["RICH_particles"][event_data["RICH_particles"]["RICH::Particle.pindex"]==np.array(unique_pindex)] 
     # Removing neutral particles from reconstructed data
     neutral_mask = (event_data["reconstructed_particles"]["REC::Particles.charge"] > 0 ) | (event_data["reconstructed_particles"]["REC::Particles.charge"] < 0)
     event_data["reconstructed_particles"] = event_data["reconstructed_particles"][neutral_mask]
@@ -139,6 +139,32 @@ def select_hits(
     nonempty_recoparticles_mask = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"])>0
     event_data = event_data[nonempty_recoparticles_mask]
     print(f"Have {len(event_data)} events after charge and momentum cuts")
+
+    # Checking to make sure RICH_particles doesn't have more particles than reco. Sometimes RICH is empty but reco isn't, so this case is ok
+    if np.any(ak.num(event_data["RICH_particles"]["RICH::Particle.pindex"], axis=1) > ak.num(event_data["reconstructed_particles"]["REC::Particles.p"], axis=1)):
+        raise ValueError("RICH::Particle has more particles per event than REC::Particles!")
+
+    # Checking to make sure REC::Traj and reco particles have the same number of particles always!
+    if not np.array_equal(ak.num(event_data["reconstructed_particles"]["REC::Particles.p"], axis=1), ak.num(event_data["trajectories"]["REC::Traj.pindex"], axis=1)):
+        raise ValueError("REC::Traj has a different number of particles per event than REC::Particles!")
+
+    reconstructed_phi = np.arctan2(event_data["reconstructed_particles"]["REC::Particles.py"], event_data["reconstructed_particles"]["REC::Particles.px"])
+    reconstructed_phi = ak.where(reconstructed_phi < 0, reconstructed_phi + 2 * np.pi, reconstructed_phi)*180/np.pi
+    
+    reconstructed_theta = np.arccos(event_data["reconstructed_particles"]["REC::Particles.pz"]/event_data["reconstructed_particles"]["REC::Particles.p"]) * 180/np.pi
+    
+    # Adding theta and phi to reconstructed particles
+    event_data["reconstructed_particles"] = ak.with_field(
+        event_data["reconstructed_particles"],
+        reconstructed_phi,
+        "REC::Particles.phi"
+    )
+    event_data["reconstructed_particles"] = ak.with_field(
+        event_data["reconstructed_particles"],
+        reconstructed_theta,
+        "REC::Particles.theta"
+    )
+
     return event_data
 def match_to_truth(event_data, max_num_trajectories = None):
 
@@ -158,10 +184,7 @@ def match_to_truth(event_data, max_num_trajectories = None):
     truth_particles = truth_particles[truth_particles["MC::Particle.p"]>0]
     truth_particles["MC::Particle.phi"] = np.arctan2(truth_particles["MC::Particle.py"], truth_particles["MC::Particle.px"])
     truth_particles["MC::Particle.phi"] = ak.where(truth_particles["MC::Particle.phi"] < 0, truth_particles["MC::Particle.phi"] + 2 * np.pi, truth_particles["MC::Particle.phi"])*180/np.pi
-    rec_particles["REC::Particles.phi"] = np.arctan2(rec_particles["REC::Particles.py"], rec_particles["REC::Particles.px"])
-    rec_particles["REC::Particles.phi"] = ak.where(rec_particles["REC::Particles.phi"] < 0, rec_particles["REC::Particles.phi"] + 2 * np.pi, rec_particles["REC::Particles.phi"])*180/np.pi
     truth_particles["MC::Particle.theta"] = np.arccos(truth_particles["MC::Particle.pz"]/truth_particles["MC::Particle.p"]) * 180/np.pi
-    rec_particles["REC::Particles.theta"] = np.arccos(rec_particles["REC::Particles.pz"]/rec_particles["REC::Particles.p"]) * 180/np.pi
     
     delta_phi = []
     delta_theta = []
@@ -205,80 +228,102 @@ def match_to_truth(event_data, max_num_trajectories = None):
                 keep_reco_event.append(False)
                 continue
 
-            # Find truth particle that minimizes |Δθ| + |Δφ| (or could use another metric)
-            distances = np.abs(dtheta_list) + np.abs(dphi_list)
-            min_index = np.argmin(distances)
-            min_dphi = dphi_list[min_index]
-            min_dtheta = dtheta_list[min_index]
-
-            # Apply the new rectangular cut
-            if (abs(min_dtheta) > delta_theta_cut) or (abs(min_dphi) > delta_phi_cut):
+            # Getting the truth particles that satisfy |Δθ| < 2 deg and |Δφ|<4 deg
+            angular_distance_mask = (np.abs(dtheta_list) < delta_theta_cut) & (np.abs(dphi_list) < delta_phi_cut)
+            min_index = -1
+            min_dphi = -1
+            min_dtheta = -1
+            num_MC_matches = 0
+            for i, value in enumerate(angular_distance_mask):
+                if not value:
+                    continue
+                if num_MC_matches == 0:
+                    min_index = i
+                    min_dphi = dphi_list[i]
+                    min_dtheta = dtheta_list[i]
+                else:
+                    old_distance = np.abs(min_dphi) + np.abs(min_dtheta)
+                    new_distance = np.abs(dphi_list[i]) + np.abs(dtheta_list[i])
+                    if new_distance < old_distance:
+                        min_index = i
+                        min_dphi = dphi_list[i]
+                        min_dtheta = dtheta_list[i]
+                num_MC_matches += 1
+            if num_MC_matches == 0:
                 matching_index_event.append(-1)
                 min_delta_phi_event.append(-1)
                 min_delta_theta_event.append(-1)
                 keep_reco_event.append(False)
                 continue
-
-            # Handle duplicates like before
-            if min_index in matching_index_event:
-                other_particle_index = matching_index_event.index(min_index)
-                other_dphi = min_delta_phi_event[other_particle_index]
-                other_dtheta = min_delta_theta_event[other_particle_index]
-                other_distance = abs(other_dphi) + abs(other_dtheta)
-                this_distance = abs(min_dphi) + abs(min_dtheta)
-
-                if this_distance < other_distance:
-                    # Replace with this particle
-                    matching_index_event.append(min_index)
-                    min_delta_phi_event.append(min_dphi)
-                    min_delta_theta_event.append(min_dtheta)
-                    keep_reco_event.append(True)
-
-                    # Try second-best for the other particle
-                    distances_other = np.abs(delta_theta_event[other_particle_index]) + \
-                                    np.abs(delta_phi_event[other_particle_index])
-                    second_smallest_index = find_second_smallest(distances_other)
-
-                    if second_smallest_index > -1:
-                        new_dphi = delta_phi_event[other_particle_index][second_smallest_index]
-                        new_dtheta = delta_theta_event[other_particle_index][second_smallest_index]
-                        if (abs(new_dtheta) <= delta_theta_cut) and (abs(new_dphi) <= delta_phi_cut):
-                            matching_index_event[other_particle_index] = second_smallest_index
-                            min_delta_phi_event[other_particle_index] = new_dphi
-                            min_delta_theta_event[other_particle_index] = new_dtheta
-                            keep_reco_event[other_particle_index] = True
-                        else:
-                            min_delta_phi_event[other_particle_index] = -1
-                            min_delta_theta_event[other_particle_index] = -1
-                            keep_reco_event[other_particle_index] = False
-                    else:
-                        min_delta_phi_event[other_particle_index] = -1
-                        min_delta_theta_event[other_particle_index] = -1
-                        keep_reco_event[other_particle_index] = False
-                else:
-                    # Current particle: try second-best
-                    second_smallest_index = find_second_smallest(distances)
-                    matching_index_event.append(second_smallest_index)
-                    if second_smallest_index > -1:
-                        new_dphi = dphi_list[second_smallest_index]
-                        new_dtheta = dtheta_list[second_smallest_index]
-                        if (abs(new_dtheta) <= delta_theta_cut) and (abs(new_dphi) <= delta_phi_cut):
-                            min_delta_phi_event.append(new_dphi)
-                            min_delta_theta_event.append(new_dtheta)
-                            keep_reco_event.append(True)
-                        else:
-                            min_delta_phi_event.append(-1)
-                            min_delta_theta_event.append(-1)
-                            keep_reco_event.append(False)
-                    else:
-                        min_delta_phi_event.append(-1)
-                        min_delta_theta_event.append(-1)
-                        keep_reco_event.append(False)
             else:
                 matching_index_event.append(min_index)
                 min_delta_phi_event.append(min_dphi)
                 min_delta_theta_event.append(min_dtheta)
                 keep_reco_event.append(True)
+                
+            
+            # This is the loop used when there are multiple reconstructed particles. It's sloppy so I commented it out (11/12/2025)
+            # Handle duplicates like before
+            # # if min_index in matching_index_event:
+            # #     print("IN SECOND PARTICLE LOOP")
+            # #     other_particle_index = matching_index_event.index(min_index)
+            # #     other_dphi = min_delta_phi_event[other_particle_index]
+            # #     other_dtheta = min_delta_theta_event[other_particle_index]
+            # #     other_distance = abs(other_dphi) + abs(other_dtheta)
+            # #     this_distance = abs(min_dphi) + abs(min_dtheta)
+
+            # #     if this_distance < other_distance:
+            # #         # Replace with this particle
+            # #         matching_index_event.append(min_index)
+            # #         min_delta_phi_event.append(min_dphi)
+            # #         min_delta_theta_event.append(min_dtheta)
+            # #         keep_reco_event.append(True)
+
+            # #         # Try second-best for the other particle
+            # #         distances_other = np.abs(delta_theta_event[other_particle_index]) + \
+            # #                         np.abs(delta_phi_event[other_particle_index])
+            # #         second_smallest_index = find_second_smallest(distances_other)
+
+            # #         if second_smallest_index > -1:
+            # #             new_dphi = delta_phi_event[other_particle_index][second_smallest_index]
+            # #             new_dtheta = delta_theta_event[other_particle_index][second_smallest_index]
+            # #             if (abs(new_dtheta) <= delta_theta_cut) and (abs(new_dphi) <= delta_phi_cut):
+            # #                 matching_index_event[other_particle_index] = second_smallest_index
+            # #                 min_delta_phi_event[other_particle_index] = new_dphi
+            # #                 min_delta_theta_event[other_particle_index] = new_dtheta
+            # #                 keep_reco_event[other_particle_index] = True
+            # #             else:
+            # #                 min_delta_phi_event[other_particle_index] = -1
+            # #                 min_delta_theta_event[other_particle_index] = -1
+            # #                 keep_reco_event[other_particle_index] = False
+            # #         else:
+            # #             min_delta_phi_event[other_particle_index] = -1
+            # #             min_delta_theta_event[other_particle_index] = -1
+            # #             keep_reco_event[other_particle_index] = False
+            # #     else:
+            # #         # Current particle: try second-best
+            # #         second_smallest_index = find_second_smallest(distances)
+            # #         matching_index_event.append(second_smallest_index)
+            # #         if second_smallest_index > -1:
+            # #             new_dphi = dphi_list[second_smallest_index]
+            # #             new_dtheta = dtheta_list[second_smallest_index]
+            # #             if (abs(new_dtheta) <= delta_theta_cut) and (abs(new_dphi) <= delta_phi_cut):
+            # #                 min_delta_phi_event.append(new_dphi)
+            # #                 min_delta_theta_event.append(new_dtheta)
+            # #                 keep_reco_event.append(True)
+            # #             else:
+            # #                 min_delta_phi_event.append(-1)
+            # #                 min_delta_theta_event.append(-1)
+            # #                 keep_reco_event.append(False)
+            # #         else:
+            # #             min_delta_phi_event.append(-1)
+            # #             min_delta_theta_event.append(-1)
+            # #             keep_reco_event.append(False)
+            # else:
+                # matching_index_event.append(min_index)
+                # min_delta_phi_event.append(min_dphi)
+                # min_delta_theta_event.append(min_dtheta)
+                # keep_reco_event.append(True)
 
         matching_index.append(matching_index_event)
         min_delta_phi.append(min_delta_phi_event)
@@ -291,30 +336,39 @@ def match_to_truth(event_data, max_num_trajectories = None):
     min_delta_theta = ak.Array(min_delta_theta)
     keep_reco = ak.Array(keep_reco)
 
-    matching_index = matching_index[keep_reco]
-    min_delta_phi = min_delta_phi[keep_reco]
-    min_delta_theta = min_delta_theta[keep_reco]
+    # Getting rid of reconstructed particles that don't pass reconstruction
+    # Need to get rid of corresponding MC match index too
     event_data["reconstructed_particles"] = event_data["reconstructed_particles"][keep_reco]
+    matching_index = matching_index[keep_reco]
+    # Removing events with no leftover reco particles
+    nonempty_reco_mask = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"], axis=1)>0
+    event_data = event_data[nonempty_reco_mask]
+    matching_index = matching_index[nonempty_reco_mask]
 
-    # Ordering the truth particles and removing the truth particles without a matching reco entry
-    event_data["truth_particles"]=event_data["truth_particles"][matching_index]
-    electron_mask = (event_data["truth_particles"]["MC::Particle.pid"] != 11) & (event_data["truth_particles"]["MC::Particle.pid"]!=-11)
-    event_data["truth_particles"]=event_data["truth_particles"][electron_mask]
-    event_data["reconstructed_particles"]=event_data["reconstructed_particles"][electron_mask]
-    
+    # Getting the truth particles associated with reco
+    event_data["truth_particles"] = event_data["truth_particles"][matching_index]
+
+    number_truth_particles = ak.num(event_data["truth_particles"]["MC::Particle.pid"])
+    number_reconstructed_particles = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"])
+    if not ak.array_equal(number_truth_particles, number_reconstructed_particles):
+        raise ValueError("Some events had an unequal number of reco and truth particles!")
+
     pion_kaon_mask = (event_data["truth_particles"]["MC::Particle.pid"] == 211) | (event_data["truth_particles"]["MC::Particle.pid"] == -211) |\
     (event_data["truth_particles"]["MC::Particle.pid"] == -321) | (event_data["truth_particles"]["MC::Particle.pid"] == 321)
-    event_data["truth_particles"] =event_data["truth_particles"][pion_kaon_mask]
+
+    # Removing electron/positrons and non-pions/kaons from truth, and the associated reco particles
+    event_data["truth_particles"] = event_data["truth_particles"][pion_kaon_mask]
     event_data["reconstructed_particles"] = event_data["reconstructed_particles"][pion_kaon_mask]
     
     number_truth_particles = ak.num(event_data["truth_particles"]["MC::Particle.pid"])
     number_reconstructed_particles = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"])
-
     if not ak.array_equal(number_truth_particles, number_reconstructed_particles):
         raise ValueError("Some events had an unequal number of reco and truth particles!")
+    
     nonempty_particles_mask = ak.num(event_data["truth_particles"]["MC::Particle.pid"])>0
     event_data = event_data[nonempty_particles_mask]
     if max_num_trajectories is not None:
+        print("in maybe unneeded mask")
         num_particles_mask = ak.num(event_data["reconstructed_particles"]["REC::Particles.pid"]) <= max_num_trajectories
         event_data = event_data[num_particles_mask]
     print(f"Have {len(event_data)} events after particle removal and reco/truth matching")
@@ -325,19 +379,20 @@ def match_to_truth(event_data, max_num_trajectories = None):
     num_pions = ak.sum(pion_mask)
     num_kaons = ak.sum(kaon_mask)
     pion_kaon_balance_mask = np.ones(len(pion_mask), dtype=bool)
+    rng = np.random.default_rng(12345)
     if num_pions > num_kaons:
         number_difference = num_pions - num_kaons
         # Get pion indices
         pion_indices = np.where(ak.to_numpy(pion_mask))[0]
         # Randomly choose pions to drop
-        drop_indices = np.random.choice(pion_indices, size=number_difference, replace=False)
+        drop_indices = rng.choice(pion_indices, size=number_difference, replace=False)
         pion_kaon_balance_mask[drop_indices] = False
     elif num_kaons > num_pions:
         number_difference = num_kaons - num_pions
         # Get kaon indices
         kaon_indices = np.where(ak.to_numpy(kaon_mask))[0]
         # Randomly choose kaons to drop
-        drop_indices = np.random.choice(kaon_indices, size=number_difference, replace=False)
+        drop_indices =rng.choice(kaon_indices, size=number_difference, replace=False)
         pion_kaon_balance_mask[drop_indices] = False
     
     event_data = event_data[pion_kaon_balance_mask]
@@ -415,6 +470,8 @@ def save_data(event_data, save_dir, file_name, sector):
     output_reco_particles = {}
     output_reco_particles["REC::Particles.pid"] = event_data["reconstructed_particles"]["REC::Particles.pid"]
     output_reco_particles["REC::Particles.p"] = scale_data(event_data["reconstructed_particles"]["REC::Particles.p"], sector, "REC::Particles.p")
+    output_reco_particles["REC::Particles.phi"] = event_data["reconstructed_particles"]["REC::Particles.phi"]
+    output_reco_particles["REC::Particles.theta"] = event_data["reconstructed_particles"]["REC::Particles.theta"]
 
     for key, value in output_reco_particles.items():
         if "pid" in key:
@@ -471,10 +528,16 @@ def save_data(event_data, save_dir, file_name, sector):
         ak.Array([[np.nan]] * len(num_rich_particles)),
         event_data["RICH_particles"]["RICH::Particle.RQ"]
     )
+    best_ch_padded = ak.where(
+        num_rich_particles == 0,
+        ak.Array([[np.nan]] * len(num_rich_particles)),
+        event_data["RICH_particles"]["RICH::Particle.best_ch"]
+    )
 
     output_RICH_particles = {}
     output_RICH_particles["RICH::Particle.best_PID"] = best_pid_padded
     output_RICH_particles["RICH::Particle.RQ"] = RQ_padded
+    output_RICH_particles["RICH::Particle.best_ch"] = best_ch_padded
 
     for key, value in output_RICH_particles.items():
         dset = output_file.create_dataset(f"RICH_particles/{key}", (len(value),), dtype=float_type)
