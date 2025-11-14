@@ -35,7 +35,7 @@ def parse_arguments():
 
 def collate_fn(batch):
     # batch is a list of (hits, label, globals_event) tuples
-    hits, labels, globals_event, reco_pid, RICH_pid, RICH_RQ = zip(*batch)
+    hits, labels, globals_event, reco_pid, RICH_PID, RICH_RQ, rec_theta, rec_phi, cherenkov_angle = zip(*batch)
 
     # hits is a list of tensors with shape [num_hits, 3]
     lengths = [h.size(0) for h in hits]
@@ -53,11 +53,15 @@ def collate_fn(batch):
     labels = torch.stack(labels)              # (B, ...)
     globals_event = torch.stack(globals_event)  # (B, ...)
     reco_pid = torch.stack(reco_pid)
-    RICH_pid = torch.stack(RICH_pid)
+    RICH_PID = torch.stack(RICH_PID)
     RICH_RQ = torch.stack(RICH_RQ)
-    return hits_padded, labels, globals_event, mask, reco_pid, RICH_pid, RICH_RQ
+    rec_theta = torch.stack(rec_theta)
+    rec_phi = torch.stack(rec_phi)
+    cherenkov_angle = torch.stack(cherenkov_angle)
 
+    return hits_padded, labels, globals_event, mask, reco_pid, RICH_PID, RICH_RQ, rec_theta, rec_phi, cherenkov_angle
 def main():
+    print("Starting up")
     flags = parse_arguments()
     data_parameters = LoadYaml(flags.config, flags.config_directory)
     training_parameters = LoadYaml(flags.training_config, flags.config_directory)
@@ -67,7 +71,7 @@ def main():
         data_parameters["SAVE_DIRECTORY"],
         data_parameters["SAVE_FILE_NAME"]+"_train.h5"
         )
-
+    print("Opening training data")
     full_dataset = H5Dataset(data_path)
     val_fraction = training_parameters.get("VALIDATION_SPLIT", 0.2)
     val_size = int(len(full_dataset) * val_fraction)
@@ -102,7 +106,7 @@ def main():
     # --- Optimizer + Loss ---
     criterion = torch.nn.BCEWithLogitsLoss()
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(model.parameters(), lr=float(training_parameters.get("LEARNING_RATE",1e-3)))
     checkpoint_dir = os.path.join(training_parameters["MODEL_SAVE_DIRECTORY"], "checkpoints")
     os.makedirs(checkpoint_dir, exist_ok=True)
     print("Starting training")
@@ -115,7 +119,7 @@ def main():
         
         model.train()
         train_loss = 0.0
-        for hits_padded, labels, globals_event, mask, _, _, _ in train_loader:
+        for hits_padded, labels, globals_event, mask, _, _, _, _, _, _ in train_loader:
             hits_padded = hits_padded.to(device)
             labels = labels.to(device)
             globals_event = globals_event.to(device)
@@ -133,7 +137,7 @@ def main():
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for hits_padded, labels, globals_event, mask, _, _, _ in val_loader:
+            for hits_padded, labels, globals_event, mask, _, _, _, _, _, _ in val_loader:
                 hits_padded = hits_padded.to(device)
                 labels = labels.to(device)
                 globals_event = globals_event.to(device)
