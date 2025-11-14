@@ -54,6 +54,8 @@ def select_hits(
         use_positives = True,
         max_num_trajectories = None,
         min_hit_multiplicity = 0,
+        minimum_momentum = 0,
+        maximum_momentum = 12,
         ):
 
     print(f"Have {len(event_data)} events originally")
@@ -135,7 +137,9 @@ def select_hits(
         "REC::Particles.p"
     )
 
-    momentum_mask = (reconstructed_momentum < 12) & (reconstructed_momentum > 0)
+    if minimum_momentum >= maximum_momentum:
+        raise ValueError("MIN_MOMENTUM must be less than MAX_MOMENTUM")
+    momentum_mask = (reconstructed_momentum < maximum_momentum) & (reconstructed_momentum > minimum_momentum)
     event_data["reconstructed_particles"] = event_data["reconstructed_particles"][momentum_mask]
 
     # After the charge and momentum cuts, removing events without any reconstructed particles
@@ -560,6 +564,8 @@ def main():
         use_positives = data_parameters["USE_POSITIVE_CHARGE"],
         max_num_trajectories = data_parameters["MAX_NUM_TRAJECTORIES"],
         min_hit_multiplicity = data_parameters["MIN_HIT_MULTIPLICITY"],
+        minimum_momentum = data_parameters["MIN_MOMENTUM"],
+        maximum_momentum = data_parameters["MAX_MOMENTUM"],
         )
     data = match_to_truth(
         data,
