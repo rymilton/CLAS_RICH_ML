@@ -73,13 +73,14 @@ def select_hits(
     valid_hits_mask = (hits["RICH::Hit.cluster"] == 0) & (hits["RICH::Hit.xtalk"] == 0) & (hits["RICH::Hit.pmt"] > 0) & (hits["RICH::Hit.pmt"] < 392)
     hits_sector_mask = hits["RICH::Hit.sector"] == sector
     event_data["RICH_hits"] = event_data["RICH_hits"][(valid_hits_mask) & (hits_sector_mask)]
+    print(f"Have {len(event_data)} events after removing invalid RICH hits")
     # Removing events without a valid RICH hit or events with less than minimum set hits
     if min_hit_multiplicity < 0:
         raise ValueError("MIN_HIT_MULTIPLICITY is set to a negative value! It should be >=0")
     hit_multiplicity_mask = ak.num(event_data["RICH_hits"]["RICH::Hit.x"])>min_hit_multiplicity
     event_data = event_data[hit_multiplicity_mask]
-
-    print(f"Have {len(event_data)} events after removing invalid RICH hits")
+    print(f"Have {len(event_data)} events after RICH::Hit multiplicity cut")
+    
 
     # Selecting reconstructed particles that have a trajectory that hits the RICH aerogel
     RICH_detector_ID = 18
@@ -157,6 +158,7 @@ def select_hits(
     event_data["RICH_particles"] = event_data["RICH_particles"][invalid_cherenkov_angle_mask]
     # Removing events with no RICH particles.
     event_data = event_data[ak.num(event_data["RICH_particles"]["RICH::Particle.best_ch"], axis=1)>0]
+    print(f"Have {len(event_data)} events after RICH::Particles cut")
     # Checking to make sure REC::Traj and reco particles have the same number of particles always!
     if not np.array_equal(ak.num(event_data["reconstructed_particles"]["REC::Particles.p"], axis=1), ak.num(event_data["trajectories"]["REC::Traj.pindex"], axis=1)):
         raise ValueError("REC::Traj has a different number of particles per event than REC::Particles!")
@@ -537,7 +539,7 @@ def main():
     data_parameters = LoadYaml(flags.config, flags.config_directory)
     if data_parameters["SECTOR"] != 1 and data_parameters["SECTOR"] != 4:
         raise ValueError("SECTOR must be set to either 1 or 4 in data.yaml!")
-    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")[:10]
+    data_files = glob.glob(data_parameters["DATA_DIRECTORY"]+"/*.root")
     data = open_file(data_files)
     data = select_hits(
         data,
