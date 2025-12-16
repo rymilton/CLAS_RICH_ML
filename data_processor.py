@@ -73,6 +73,9 @@ def select_hits(
     valid_hits_mask = (hits["RICH::Hit.cluster"] == 0) & (hits["RICH::Hit.xtalk"] == 0) & (hits["RICH::Hit.pmt"] > 0) & (hits["RICH::Hit.pmt"] < 392)
     hits_sector_mask = hits["RICH::Hit.sector"] == sector
     event_data["RICH_hits"] = event_data["RICH_hits"][(valid_hits_mask) & (hits_sector_mask)]
+    # Removing events without a valid RICH hit
+    nonempty_hits_mask = ak.num(event_data["RICH_hits"]["RICH::Hit.x"])>0
+    event_data = event_data[nonempty_hits_mask]
     print(f"Have {len(event_data)} events after removing invalid RICH hits")
     # Removing events without a valid RICH hit or events with less than minimum set hits
     if min_hit_multiplicity < 0:
