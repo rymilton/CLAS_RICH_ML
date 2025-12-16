@@ -19,7 +19,7 @@ struct Particle {
 };
 
 Particle generateParticle(int pdg, double mass, int sector = 1) {
-  double p = gRandom->Uniform(1.5, 7); // momentum in GeV
+  double p = gRandom->Uniform(1.5, 8); // momentum in GeV
 
   double theta = gRandom->Uniform(5, 40) * deg2rad;
   double phi_low, phi_high;
@@ -77,9 +77,13 @@ void lund_generator() {
   vector<pair<int, double>> particles = {
     {211,  0.1395}, // pi+
     {321,  0.4937}, // K+
+    {2212, 0.9383}, // proton
+    {-211,  0.1395}, // pi-
+    {-321,  0.4937}, // K-
+    {-2212, 0.9383}, // antiproton
   };
   const int nEv_pFile = 5000;
-  const int nFiles = 200;
+  const int nFiles = 2000;
 
   const double Mel = 0.000511;
   const double beamE = 10.6;
@@ -109,9 +113,8 @@ void lund_generator() {
   for (int j = 0; j < nFiles; j++) {
     cout << "FileNb: " << j << endl;
     FILE* f;
-    TString name = filename + Form("%.4d.txt", j);
+    TString name = filename + Form("%.4d.dat", j);
     f = fopen(name.Data(), "w");
-
 
     Long64_t evInFile = 0;
 
