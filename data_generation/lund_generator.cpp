@@ -89,13 +89,13 @@ void lund_generator() {
     {-321,  0.4937}, // K-
     {-2212, 0.9383}, // antiproton
   };
-  const int nEv_pFile = 1000;
-  const int nFiles = 500;
+  const int nEv_pFile = 10000;
+  const int nFiles = 10000;
 
   const double Mel = 0.000511;
   const double beamE = 10.6;
 
-  TString dir = "/volatile/clas12/rmilton/RICH_data_generation_12_2025/lund_3cmshift/";
+  TString dir = "/volatile/clas12/rmilton/RICH_data_generation_12_2025/lund_rgaspring2018/";
   TString filename = dir + "file_";
 
   // Histograms
@@ -147,7 +147,7 @@ void lund_generator() {
         fprintf(f, "%d %d %d %d %d %d %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f\n",
                 idx, 1, 1, p.pdg, 0, 0,
                 p.vec.Px(), p.vec.Py(), p.vec.Pz(), p.vec.E(),
-                p.mass, 0.0, 0.0, -3.0);
+                p.mass, 0.0, 0.0, -1.94);
       };
 
       writeParticle(1, electron);
