@@ -44,7 +44,7 @@ def collate_train(batch):
     max_len = hits_padded.size(1)
     mask = torch.arange(max_len)[None, :] < lengths[:, None]  # (B, max_len)
 
-    # Convert labels from [1,0] or [0,1] to 0 or 1
+    # Convert labels from [1,0] or [0,1] to 0 or 1. For kaons and pions, this makes pions 0 and kaons 1
     labels_stacked = torch.stack(labels)  # (B, 2)
     labels_binary = labels_stacked.argmax(dim=1).long()  # (B,)
     return hits_padded, labels_binary, torch.stack(globals_event), mask
