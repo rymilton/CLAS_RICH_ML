@@ -1,11 +1,28 @@
-EPOCHS: 200
-BATCH_SIZE: 64
-LEARNING_RATE: 1e-5
+EPOCHS: 500
+BATCH_SIZE: 256
+LEARNING_RATE: 1e-3
 HIT_DIMENSIONS: 3
-GLOBAL_DIMENSIONS: 6
-HIDDEN_DIMENSIONS: 64
+GLOBAL_DIMENSIONS: 9
+HIDDEN_DIMENSIONS: 128
 NUMBER_CLASSES: 2
 k: 10
-MODEL_SAVE_DIRECTORY: "/volatile/clas12/rmilton/RICH_models_LR1E-5_64hiddendimensions_200epochs_0.1validationsplit_dropout0.2_3.15GeVmomentumcut/"
-VALIDATION_SPLIT: 0.1
-DROPOUT_RATE: 0.2
+MODEL_SAVE_DIRECTORY: "/volatile/clas12/rmilton/trained_RICH_models/12_2025_dataset/RICH_models_rgaspring2018reco_crossentropy_adjustedpadding_withLRscheduler_earlystop_withlayernum_onehot_fourlayers_withdropout/"
+VALIDATION_SPLIT: 0.2
+DROPOUT_RATE: 0.2 # NOTE: This dropout is only for the final classification layer, not the GravNet layers
+
+# ---------------- Scheduler ----------------
+SCHEDULER: "ReduceLROnPlateau"              # Options: StepLR, ReduceLROnPlateau
+
+# StepLR settings
+SCHEDULER_GAMMA: 0.3
+
+# ReduceLROnPlateau settings (used only if selected)
+SCHEDULER_PATIENCE: 20
+SCHEDULER_THRESHOLD: 1e-3
+SCHEDULER_COOLDOWN: 5
+SCHEDULER_MIN_LR: 1e-6
+
+# ---------------- Early Stopping ----------------
+EARLY_STOPPING: true
+EARLY_STOPPING_PATIENCE: 40
+EARLY_STOPPING_MIN_DELTA: 1e-3
