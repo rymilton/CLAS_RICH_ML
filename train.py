@@ -1,5 +1,5 @@
 from torch.utils.data import DataLoader, random_split, Dataset
-from dataset_thetaphicut import H5Dataset
+from dataset import H5Dataset
 import torch
 import argparse
 import os
