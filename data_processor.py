@@ -438,69 +438,6 @@ def match_to_truth(event_data, max_num_trajectories=None):
                 min_delta_theta_event.append(min_dtheta)
                 keep_reco_event.append(True)
 
-            # This is the loop used when there are multiple reconstructed particles. It's sloppy so I commented it out (11/12/2025)
-            # Handle duplicates like before
-            # # if min_index in matching_index_event:
-            # #     print("IN SECOND PARTICLE LOOP")
-            # #     other_particle_index = matching_index_event.index(min_index)
-            # #     other_dphi = min_delta_phi_event[other_particle_index]
-            # #     other_dtheta = min_delta_theta_event[other_particle_index]
-            # #     other_distance = abs(other_dphi) + abs(other_dtheta)
-            # #     this_distance = abs(min_dphi) + abs(min_dtheta)
-
-            # #     if this_distance < other_distance:
-            # #         # Replace with this particle
-            # #         matching_index_event.append(min_index)
-            # #         min_delta_phi_event.append(min_dphi)
-            # #         min_delta_theta_event.append(min_dtheta)
-            # #         keep_reco_event.append(True)
-
-            # #         # Try second-best for the other particle
-            # #         distances_other = np.abs(delta_theta_event[other_particle_index]) + \
-            # #                         np.abs(delta_phi_event[other_particle_index])
-            # #         second_smallest_index = find_second_smallest(distances_other)
-
-            # #         if second_smallest_index > -1:
-            # #             new_dphi = delta_phi_event[other_particle_index][second_smallest_index]
-            # #             new_dtheta = delta_theta_event[other_particle_index][second_smallest_index]
-            # #             if (abs(new_dtheta) <= delta_theta_cut) and (abs(new_dphi) <= delta_phi_cut):
-            # #                 matching_index_event[other_particle_index] = second_smallest_index
-            # #                 min_delta_phi_event[other_particle_index] = new_dphi
-            # #                 min_delta_theta_event[other_particle_index] = new_dtheta
-            # #                 keep_reco_event[other_particle_index] = True
-            # #             else:
-            # #                 min_delta_phi_event[other_particle_index] = -1
-            # #                 min_delta_theta_event[other_particle_index] = -1
-            # #                 keep_reco_event[other_particle_index] = False
-            # #         else:
-            # #             min_delta_phi_event[other_particle_index] = -1
-            # #             min_delta_theta_event[other_particle_index] = -1
-            # #             keep_reco_event[other_particle_index] = False
-            # #     else:
-            # #         # Current particle: try second-best
-            # #         second_smallest_index = find_second_smallest(distances)
-            # #         matching_index_event.append(second_smallest_index)
-            # #         if second_smallest_index > -1:
-            # #             new_dphi = dphi_list[second_smallest_index]
-            # #             new_dtheta = dtheta_list[second_smallest_index]
-            # #             if (abs(new_dtheta) <= delta_theta_cut) and (abs(new_dphi) <= delta_phi_cut):
-            # #                 min_delta_phi_event.append(new_dphi)
-            # #                 min_delta_theta_event.append(new_dtheta)
-            # #                 keep_reco_event.append(True)
-            # #             else:
-            # #                 min_delta_phi_event.append(-1)
-            # #                 min_delta_theta_event.append(-1)
-            # #                 keep_reco_event.append(False)
-            # #         else:
-            # #             min_delta_phi_event.append(-1)
-            # #             min_delta_theta_event.append(-1)
-            # #             keep_reco_event.append(False)
-            # else:
-            # matching_index_event.append(min_index)
-            # min_delta_phi_event.append(min_dphi)
-            # min_delta_theta_event.append(min_dtheta)
-            # keep_reco_event.append(True)
-
         matching_index.append(matching_index_event)
         min_delta_phi.append(min_delta_phi_event)
         min_delta_theta.append(min_delta_theta_event)
@@ -717,9 +654,6 @@ def save_data(event_data, save_dir, file_name, sector):
         sector,
         "trajectories/RICH_aerogel_b1/REC::Traj.x",
     )
-    # print(RICH_aerogel_b1_mask)
-    # print(b1_x)
-    # print(len(b1_x))
     b1_y = scale_data(
         event_data["trajectories"][RICH_aerogel_b1_mask]["REC::Traj.y"],
         sector,
