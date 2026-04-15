@@ -2,3 +2,5 @@ notebooks/hists_for_normalization.ipynb
 __pycache__
 .ipynb_checkpoints
 RICH_hipo2root
+plots*
+*.swp
