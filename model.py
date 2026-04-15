@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 def pairwise_distance(x):
     # x: (B, N, F)
     # returns (B, N, N) squared distances
@@ -11,25 +12,44 @@ def pairwise_distance(x):
     return dist
 
 
-def knn(x, k=16):
+def knn(x, k=16, mask=None):
     # x: (B, N, F)
+    # mask: (B, N) bool, optional mask to exclude padded nodes
     # returns indices of k nearest neighbors
-    dist = pairwise_distance(x)
+    dist = pairwise_distance(x)  # (B, N, N)
+
+    if mask is not None:
+        # Expand mask to (B, N, N) for broadcasting
+        source_mask = mask.unsqueeze(2).expand_as(dist)  # (B, N, 1) -> (B, N, N)
+        target_mask = mask.unsqueeze(1).expand_as(dist)  # (B, 1, N) -> (B, N, N)
+
+        # Set distance to inf for padded nodes (source or target)
+        dist[~source_mask] = float("inf")  # padded as source node
+        dist[~target_mask] = float("inf")  # padded as target neighbor
+
     knn_idx = dist.topk(k=k, dim=-1, largest=False).indices  # (B, N, k)
     return knn_idx
 
 
 class GravNetLayer(nn.Module):
-    def __init__(self, input_dimensions, output_dimensions, propagate_dimensions=64, space_dim=4, k=16, dropout_rate=0):
+    def __init__(
+        self,
+        input_dimensions,
+        output_dimensions,
+        propagate_dimensions=64,
+        space_dim=4,
+        k=16,
+        dropout_rate=0,
+    ):
         super().__init__()
         self.k = k
-        self.space = nn.Linear(input_dimensions, space_dim)   # learnable projection
+        self.space = nn.Linear(input_dimensions, space_dim)  # learnable projection
         self.features = nn.Linear(input_dimensions, propagate_dimensions)
         self.mlp = nn.Sequential(
-            nn.Linear(2*propagate_dimensions, output_dimensions),
+            nn.Linear(2 * propagate_dimensions, output_dimensions),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(output_dimensions, output_dimensions)
+            nn.Linear(output_dimensions, output_dimensions),
         )
 
     def forward(self, x, mask):
@@ -37,28 +57,26 @@ class GravNetLayer(nn.Module):
         # mask: (B, N) bool
         x_feats = self.features(x)  # (B, N, F_out)
         x_feats = x_feats * mask.unsqueeze(-1)
-        coords = self.space(x)      # (B, N, space_dim)
-
-        # Mask out padded hits before distance computation
-        coords_masked = coords.clone()
-        coords_masked[~mask] = float('inf')
+        coords = self.space(x)  # (B, N, space_dim)
 
         B, N, F_out = x_feats.shape
         k = min(self.k, N)
 
-        # Get nearest neighbors (B, N, k)
-        knn_idx = knn(coords_masked, k=k)
+        # Get nearest neighbors with mask to exclude padded nodes
+        knn_idx = knn(coords, k=k, mask=mask)
 
         # Build batch indices for gather
         batch_idx = torch.arange(B, device=x.device).view(B, 1, 1)
         batch_idx = batch_idx.expand(-1, N, k)
 
         # Gather neighbor features and coordinates
-        neighbor_coords = coords[batch_idx, knn_idx]   # (B, N, k, space_dim)
-        neighbor_feats  = x_feats[batch_idx, knn_idx]  # (B, N, k, F_out)
+        neighbor_coords = coords[batch_idx, knn_idx]  # (B, N, k, space_dim)
+        neighbor_feats = x_feats[batch_idx, knn_idx]  # (B, N, k, F_out)
 
         # Compute distances to neighbors
-        d2 = torch.sum((coords.unsqueeze(2) - neighbor_coords) ** 2, dim=-1)  # (B, N, k)
+        d2 = torch.sum(
+            (coords.unsqueeze(2) - neighbor_coords) ** 2, dim=-1
+        )  # (B, N, k)
 
         # Compute weights
         weights = torch.exp(-10 * d2)  # (B, N, k)
@@ -73,23 +91,36 @@ class GravNetLayer(nn.Module):
         out = self.mlp(combined)
         return out
 
+
 class GravNetModel(nn.Module):
-    def __init__(self, hit_dim=3, global_dim=10, hidden_dim=64, num_classes=2, k=16, dropout_rate=0):
+    def __init__(
+        self,
+        hit_dim=3,
+        global_dim=10,
+        hidden_dim=64,
+        num_classes=2,
+        k=16,
+        dropout_rate=0,
+    ):
         super().__init__()
-        self.layer1 = GravNetLayer(hit_dim, hidden_dim, k=k, dropout_rate=dropout_rate)
-        self.layer2 = GravNetLayer(hidden_dim, hidden_dim, k=k, dropout_rate=dropout_rate)
+        self.layer1 = GravNetLayer(hit_dim, hidden_dim, k=k)
+        self.layer2 = GravNetLayer(hidden_dim, hidden_dim, k=k)
+        self.layer3 = GravNetLayer(hidden_dim, hidden_dim, k=k)
+        self.layer4 = GravNetLayer(hidden_dim, hidden_dim, k=k)
         self.global_fc = nn.Linear(global_dim, hidden_dim)
         self.classifier = nn.Sequential(
             nn.Linear(2 * hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(hidden_dim, num_classes)
+            nn.Linear(hidden_dim, num_classes),
         )
 
     def forward(self, hits_padded, globals_event, mask):
         x = hits_padded
         x = self.layer1(x, mask)
         x = self.layer2(x, mask)
+        x = self.layer3(x, mask)
+        x = self.layer4(x, mask)
 
         # Aggregate per-event node features
         # Mask padded hits before mean
