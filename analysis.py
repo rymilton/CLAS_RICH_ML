@@ -1,619 +1,1604 @@
+"""
+Analysis script for RICH PID model performance.
+Compares GravNet model with RICH/reconstructed PID systems.
+"""
+
 import torch
 import numpy as np
 import awkward as ak
 import matplotlib.pyplot as plt
 import mplhep as hep
-hep.style.use("CMS")
+import matplotlib.colors as colors
 from sklearn.metrics import roc_curve, auc
 import os
-import matplotlib.colors as colors
-model_dir = "/volatile/clas12/rmilton/RICH_models_LR1E-3_128hiddendimensions_200epochs_0.1validationsplit_3.15GeVmomentumcut_withbestch/"
-print(model_dir)
-# plot_title = "RICH Sector 4 positives p>3.15 GeV, 200 Epochs\nLR=1E-3, 128 hidden dimensions, 10% validation"
-plot_title = "RICH Sector 4 positives p>3.15 GeV, 200 Epochs\nLR=1E-3, 128 hidden dimensions, 10% validation"
-plot_directory = "./plots/"
-os.makedirs(plot_directory, exist_ok=True)
 
-# Opening the files
-losses = torch.load(model_dir+"/training_losses.pt")
-loss_epochs = [losses[i]["epoch"] for i in range(len(losses))]
-train_loss_per_epoch = [losses[i]["train_loss"] for i in range(len(losses))]
-validation_loss_per_epoch = [losses[i]["val_loss"] for i in range(len(losses))]
-
-predictions = torch.load(model_dir+"/test_predictions.pt")
-cherenkov_angles = predictions["RICH_cherenkov_angle"].cpu().detach().numpy()[:, 0]
-
-model_probabilities = predictions["probabilities"].cpu().detach().numpy()
-true_labels = predictions["labels"].cpu().detach().numpy()
-
-reconstructed_pid = predictions["reco_pid"].cpu().detach().numpy()[:, 0]
-reconstructed_momentum = predictions["reco_momentum"].cpu().detach().numpy()
-RICH_PID = predictions["RICH_PID"].cpu().detach().numpy()
-RICH_RQ = predictions["RICH_RQ"].cpu().detach().numpy()
-
-rec_traj_x = predictions["reco_traj_x"].cpu().detach().numpy()
-rec_traj_y = predictions["reco_traj_y"].cpu().detach().numpy()
-rec_traj_cx = predictions["reco_traj_cx"].cpu().detach().numpy()
-rec_traj_cy = predictions["reco_traj_cy"].cpu().detach().numpy()
-rec_traj_cz = predictions["reco_traj_cz"].cpu().detach().numpy()
-
-rec_theta = ak.flatten(predictions["reco_theta"].cpu().detach().numpy())
-rec_phi = predictions["reco_phi"].cpu().detach().numpy()
-
-RICH_hits_x_padded = predictions["RICH_hits_x"]
-RICH_hits_y_padded = predictions["RICH_hits_y"]
-RICH_hits_time_padded = predictions["RICH_hits_time"]
-RICH_hits_mask = predictions["RICH_hits_mask"]
-RICH_hits_x, RICH_hits_y, RICH_hits_time = [], [], []
-# Loop over batches
-for batch_x, batch_y, batch_time, batch_mask in zip(
-    RICH_hits_x_padded, RICH_hits_y_padded, RICH_hits_time_padded, RICH_hits_mask
-):
-    # Loop over events in each batch
-    for event_x, event_y, event_time, event_mask in zip(batch_x, batch_y, batch_time, batch_mask):
-        valid = event_mask.cpu().numpy().astype(bool)
-
-        # Apply mask and move to numpy (fast)
-        x = event_x.cpu().numpy()[valid]
-        y = event_y.cpu().numpy()[valid]
-        t = event_time.cpu().numpy()[valid]
-
-        RICH_hits_x.append(x)
-        RICH_hits_y.append(y)
-        RICH_hits_time.append(t)
-
-# Convert all lists of numpy arrays into Awkward Arrays
-RICH_hits_x = ak.Array(RICH_hits_x)
-RICH_hits_y = ak.Array(RICH_hits_y)
-RICH_hits_time = ak.Array(RICH_hits_time)
-
-
-pion_events_mask = (true_labels==[1, 0])[:, 0]
-kaon_events_mask = (true_labels==[0, 1])[:, 0]
-
-model_probabilities_for_kaons = model_probabilities[:, 1]
-model_probabilities_for_pions = model_probabilities[:, 0]
-
-# Loss curve
-figure_loss = plt.figure(figsize=(12,8))
-plt.plot(loss_epochs, train_loss_per_epoch, label="Training")
-plt.plot(loss_epochs, validation_loss_per_epoch, label="Validation")
-plt.xlabel("Epoch")
-plt.ylabel("Loss (BCEWithLogits)")
-plt.title(plot_title)
-plt.xlim(0, 200)
-plt.legend()
-plt.tight_layout()
-plt.savefig(plot_directory+'losses.png')
-
-# Momentum distribution
-figure_loss = plt.figure(figsize=(12,8))
-plt.hist(reconstructed_momentum, bins=50)
-plt.xlabel("p (GeV)")
-plt.title(plot_title)
-plt.yscale('log')
-plt.ylabel("Counts (log)")
-plt.savefig(plot_directory+'momentum.png')
-
-
-# Model probabilties for kaons
-print(min(reconstructed_momentum), max(reconstructed_momentum))
-momentum_bins = np.linspace(1.5, 7, 11)
-momentum_bin_centers = (momentum_bins[1:] + momentum_bins[:-1])/2
-
-fig_kaons, axs_kaons = plt.subplots(nrows=5, ncols=2, figsize=(12,16))
-axs_kaons = axs_kaons.flatten()
-for i in range(len(momentum_bins)-1):
-    lower_bin, upper_bin = momentum_bins[i], momentum_bins[i+1]
-    momentum_mask = (reconstructed_momentum>=lower_bin) & (reconstructed_momentum < upper_bin)
-
-    model_probabilities_for_kaons_momentum_bin = model_probabilities_for_kaons[momentum_mask]
-    total_counts = len(model_probabilities_for_kaons_momentum_bin)
-    kaon_events_mask_momentum_bin = kaon_events_mask[momentum_mask]
-    pion_events_mask_momentum_bin = pion_events_mask[momentum_mask]
-
-    axs_kaons[i].hist(
-        model_probabilities_for_kaons_momentum_bin[kaon_events_mask_momentum_bin],
-        range=(0,1),
-        bins=20,
-        label="True label: $K^+$",
-        alpha=0.5,
-    )
-    axs_kaons[i].hist(
-        model_probabilities_for_kaons_momentum_bin[pion_events_mask_momentum_bin],
-        range=(0,1),
-        bins=20,
-        label="True label: $\pi^+$",
-        alpha=0.5,
-    )
-    axs_kaons[i].legend(fontsize=12)
-    axs_kaons[i].set_title(f"${round(lower_bin,3)}~GeV~ \leq p < {round(upper_bin,3)}~GeV$\n Total counts={total_counts}", fontsize=12)
-plt.xlabel("Probability event contains $K^+$")
-plt.ylabel("Entries")
-plt.suptitle(plot_title)
-plt.tight_layout()
-plt.savefig(plot_directory+'kaon_probabilties.png')
-
-# Model probabilties for pions
-fig_pions, axs_pions = plt.subplots(nrows=5, ncols=2, figsize=(10,16))
-axs_pions = axs_pions.flatten()
-
-pion_event_probabilities = []
-pion_mask_per_momentum = []
-for i in range(len(momentum_bins)-1):
-    lower_bin, upper_bin = momentum_bins[i], momentum_bins[i+1]
-    momentum_mask = (reconstructed_momentum>=lower_bin) & (reconstructed_momentum < upper_bin)
-
-    
-    
-    model_probabilities_for_pions_momentum_bin = model_probabilities_for_pions[momentum_mask]
-    pion_event_probabilities.append(model_probabilities_for_pions_momentum_bin)
-    total_counts = len(model_probabilities_for_pions_momentum_bin)
-    kaon_events_mask_momentum_bin = kaon_events_mask[momentum_mask]
-    pion_events_mask_momentum_bin = pion_events_mask[momentum_mask]
-    pion_mask_per_momentum.append(pion_events_mask[momentum_mask])
-    
-    axs_pions[i].hist(
-        model_probabilities_for_pions_momentum_bin[kaon_events_mask_momentum_bin],
-        range=(0,1),
-        bins=20,
-        label="True label: $K^+$",
-        alpha=0.5,
-    )
-    axs_pions[i].hist(
-        model_probabilities_for_pions_momentum_bin[pion_events_mask_momentum_bin],
-        range=(0,1),
-        bins=20,
-        label="True label: $\pi^+$",
-        alpha=0.5,
-    )
-    axs_pions[i].legend(fontsize=12)
-    axs_pions[i].set_title(f"${round(lower_bin,3)}~GeV~ \leq p < {round(upper_bin,3)}~GeV$\n Total counts={total_counts}", fontsize=12)
-    axs_pions[i].set_xlabel("Probability event contains $\pi^+$", fontsize=12)
-    axs_pions[i].set_ylabel("Counts", fontsize=12)
-plt.suptitle(plot_title)
-plt.tight_layout()
-plt.savefig(plot_directory+'pion_probabilties.png')
-
-# Model efficiencies for different probability thresholds
-probability_thresholds = np.linspace(0,1,20)
-pion_probabilities = model_probabilities_for_pions[pion_events_mask]
-kaon_probabilities = model_probabilities_for_pions[kaon_events_mask]
-
-# Combine into one array of scores
-y_scores = np.concatenate([pion_probabilities, kaon_probabilities])
-
-# True labels: 1 for pion, 0 for kaon
-y_true = np.concatenate([
-    np.ones_like(pion_probabilities),
-    np.zeros_like(kaon_probabilities)
-])
-
-# Compute ROC curve
-fpr, tpr, thresholds = roc_curve(y_true, y_scores)
-
-# Compute AUC
-roc_auc = auc(fpr, tpr)
-
-# Plot ROC curve
-plt.figure()
-plt.plot(fpr, tpr, color='blue', lw=2, label=f'ROC curve (AUC = {roc_auc:.3f})')
-plt.plot([0, 1], [0, 1], color='gray', linestyle='--')
-plt.xlabel('Kaon misidentification')
-plt.ylabel('Pion efficiency')
-plt.title(plot_title)
-plt.legend(loc='lower right')
-plt.grid(True)
-for i in range(0, len(thresholds), max(1, len(thresholds)//15)):
-    plt.text(fpr[i], tpr[i],
-             f"{thresholds[i]:.2f}",
-             fontsize=8, color='black',
-             ha='right', va='bottom', rotation=45)
-plt.show()
-
-print(f"AUC = {roc_auc:.4f}")
-plt.savefig(plot_directory+"ROC.png")
-
-probability_thresholds = [0.2, 0.4, 0.5, 0.7, 0.8, 0.9]
-fig_thresholds, axs_threshold = plt.subplots(nrows=2, ncols=3, figsize=(16,10))
-axs_threshold = axs_threshold.flatten()
-for i, threshold in enumerate(probability_thresholds):
-    pion_accuracies = []
-    kaon_misidentifications = []
-    empty_momentum_mask = np.ones(len(momentum_bin_centers), dtype=bool)
-    for j, (probabilities_per_momentum, pion_events_per_momentum) in enumerate(zip(pion_event_probabilities, pion_mask_per_momentum)):
-        if len(probabilities_per_momentum) ==0:
-            empty_momentum_mask[j] = 0
-            continue
-        threshold_mask = probabilities_per_momentum > threshold
-        probabilities_passing_threshold = probabilities_per_momentum[threshold_mask]
-        pion_events = pion_events_per_momentum[threshold_mask]
-
-        num_correct_pion_events = len(probabilities_passing_threshold[pion_events])
-        num_incorrect_kaon_events = len(probabilities_passing_threshold[~pion_events]) # num kaons that pass the pion threshold
-
-        # probabilities_per_momentum[pion_events_per_momentum] is the number of pion events in this momentum bin
-        # probabilities_per_momentum[~pion_events_per_momentum] is the number of kaon events in this momentum bin
-        if len(probabilities_per_momentum[pion_events_per_momentum]) > 0:
-            pion_accuracies.append(num_correct_pion_events/len(probabilities_per_momentum[pion_events_per_momentum]))
-        else:
-            pion_accuracies.append(-1)
-        if len(probabilities_per_momentum[~pion_events_per_momentum]) > 0:
-            kaon_misidentifications.append(num_incorrect_kaon_events/len(probabilities_per_momentum[~pion_events_per_momentum]))
-        else:
-            kaon_misidentifications.append(-1)
-    axs_threshold[i].scatter(momentum_bin_centers[empty_momentum_mask], pion_accuracies, color='r', label="$\pi^+$")
-    axs_threshold[i].scatter(momentum_bin_centers[empty_momentum_mask], kaon_misidentifications, color='b', label="$K^+$")
-    axs_threshold[i].set_xlabel("p (GeV)", fontsize=12)
-    axs_threshold[i].set_ylabel("Efficiency of passing $\pi^+$ cut", fontsize=12)
-    axs_threshold[i].legend(fontsize=12)
-    axs_threshold[i].set_title(f"Probability Threshold = {threshold}", fontsize=12)
-    axs_threshold[i].set_ylim(-.1,1.1)
-    axs_threshold[i].grid()
-    if threshold in [.5,.8]:
-        print(f"Average pion accuracy at threshold={threshold}:", np.mean(pion_accuracies))
-        print(f"Average kaon misidentifactionat threshold={threshold}:", np.mean(kaon_misidentifications))
-        # print(f"Pion accuracies at threshold={threshold}:", pion_accuracies)
-        # print(f"Kaon misidentifactions at threshold={threshold}:", kaon_misidentifications)
-        ratios = []
-        for p, k in zip(pion_accuracies, kaon_misidentifications):
-            if k != 0:
-                ratios.append(p / k)
-            else:
-                ratios.append(np.nan)  # or 0, or None, whatever makes sense
-
-        print(f"Pion/kaon ratios at threshold={threshold}: {ratios}")
-        print(f"Avg. Pion/kaon ratios at threshold={threshold}: {np.mean(ratios)}")
-
-plt.suptitle(plot_title)
-plt.tight_layout()
-plt.savefig(plot_directory+f'thresholds.png')
-
-# --- Comparison: Model vs Reconstructed PID (styled like thresholds.png) ---
-
-fig_compare, axs_compare = plt.subplots(nrows=2, ncols=3, figsize=(16,10))
-axs_compare = axs_compare.flatten()
-
-for i, threshold in enumerate(probability_thresholds):
-    pion_accuracies_model = []
-    kaon_misidentifications_model = []
-
-    pion_accuracies_reco = []
-    kaon_misidentifications_reco = []
-
-    empty_momentum_mask = np.ones(len(momentum_bin_centers), dtype=bool)
-    
-    for j, (probabilities_per_momentum, pion_events_per_momentum) in enumerate(zip(pion_event_probabilities, pion_mask_per_momentum)):
-        if len(probabilities_per_momentum) == 0:
-            empty_momentum_mask[j] = 0
-            continue
-
-        # ------------------------------
-        # Model performance
-        # ------------------------------
-        threshold_mask = probabilities_per_momentum > threshold
-        probs_pass = probabilities_per_momentum[threshold_mask]
-        pions_pass = pion_events_per_momentum[threshold_mask]
-
-        # Pion accuracy (model)
-        if np.sum(pion_events_per_momentum) > 0:
-            pion_accuracies_model.append(np.sum(pions_pass) / np.sum(pion_events_per_momentum))
-        else:
-            pion_accuracies_model.append(-1)
-
-        # Kaon misidentification (model)
-        if np.sum(~pion_events_per_momentum) > 0:
-            kaon_misidentifications_model.append(np.sum(~pions_pass) / np.sum(~pion_events_per_momentum))
-        else:
-            kaon_misidentifications_model.append(-1)
-
-        # ------------------------------
-        # Reconstructed PID performance
-        # ------------------------------
-        momentum_bin_mask = (reconstructed_momentum >= momentum_bins[j]) & (reconstructed_momentum < momentum_bins[j+1])
-        reco_pion_mask_bin = (reconstructed_pid[momentum_bin_mask] == 211)
-
-        # Pion accuracy (reco)
-        true_pions_bin = pion_events_per_momentum
-        if np.sum(true_pions_bin) > 0:
-            pion_accuracies_reco.append(np.sum(reco_pion_mask_bin[true_pions_bin]) / np.sum(true_pions_bin))
-        else:
-            pion_accuracies_reco.append(-1)
-
-        # Kaon misidentification (reco)
-        true_kaons_bin = ~pion_events_per_momentum
-        if np.sum(true_kaons_bin) > 0:
-            kaon_misidentifications_reco.append(np.sum(reco_pion_mask_bin[true_kaons_bin]) / np.sum(true_kaons_bin))
-        else:
-            kaon_misidentifications_reco.append(-1)
-
-    # ------------------------------
-    # Plot both on same axes
-    # ------------------------------
-    axs_compare[i].scatter(momentum_bin_centers[empty_momentum_mask], pion_accuracies_model, color='r', marker='o', label="GravNet $\pi^+$ ")
-    axs_compare[i].scatter(momentum_bin_centers[empty_momentum_mask], kaon_misidentifications_model, color='b', marker='o', label="GravNet $K^+$")
-    
-    axs_compare[i].scatter(momentum_bin_centers[empty_momentum_mask], pion_accuracies_reco, color='r', marker='s', label="Reco $\pi^+$", facecolor='none')
-    axs_compare[i].scatter(momentum_bin_centers[empty_momentum_mask], kaon_misidentifications_reco, color='b', marker='s', label="Reco $K^+$", facecolor='none')
-
-    axs_compare[i].set_xlabel("p (GeV)", fontsize=12)
-    axs_compare[i].set_ylabel("Efficiency of passing $\pi^+$ cut", fontsize=12)
-    axs_compare[i].set_title(f"Probability Threshold = {threshold}", fontsize=12)
-    axs_compare[i].set_ylim(-0.1, 1.1)
-    axs_compare[i].grid()
-    axs_compare[i].legend(fontsize=12)
-
-plt.suptitle(plot_title)
-plt.tight_layout()
-plt.savefig(plot_directory+'model_vs_reco_pid_comparison.png')
-
-
-# --- Comparison: Model vs RICH_PID (styled like thresholds.png) ---
-
-fig_compare_rich, axs_compare_rich = plt.subplots(nrows=2, ncols=3, figsize=(16,10))
-axs_compare_rich = axs_compare_rich.flatten()
-
-# Assume RICH_PID uses the same convention: 211 = pion, 321 = kaon
-for i, threshold in enumerate(probability_thresholds):
-    pion_accuracies_model = []
-    kaon_misidentifications_model = []
-
-    pion_accuracies_rich = []
-    kaon_misidentifications_rich = []
-
-    empty_momentum_mask = np.ones(len(momentum_bin_centers), dtype=bool)
-    
-    for j, (probabilities_per_momentum, pion_events_per_momentum) in enumerate(zip(pion_event_probabilities, pion_mask_per_momentum)):
-        if len(probabilities_per_momentum) == 0:
-            empty_momentum_mask[j] = 0
-            continue
-
-        # ------------------------------
-        # Model performance
-        # ------------------------------
-        threshold_mask = probabilities_per_momentum > threshold
-        probs_pass = probabilities_per_momentum[threshold_mask]
-        pions_pass = pion_events_per_momentum[threshold_mask]
-
-        if np.sum(pion_events_per_momentum) > 0:
-            pion_accuracies_model.append(np.sum(pions_pass) / np.sum(pion_events_per_momentum))
-        else:
-            pion_accuracies_model.append(-1)
-
-        if np.sum(~pion_events_per_momentum) > 0:
-            kaon_misidentifications_model.append(np.sum(~pions_pass) / np.sum(~pion_events_per_momentum))
-        else:
-            kaon_misidentifications_model.append(-1)
-
-        # ------------------------------
-        # RICH PID performance
-        # ------------------------------
-        momentum_bin_mask = (reconstructed_momentum >= momentum_bins[j]) & (reconstructed_momentum < momentum_bins[j+1])
-        rich_pion_mask_bin = (RICH_PID[momentum_bin_mask] == 211)
-
-        true_pions_bin = pion_events_per_momentum
-        true_kaons_bin = ~pion_events_per_momentum
-
-        # Pion accuracy (RICH)
-        if np.sum(true_pions_bin) > 0:
-            pion_accuracies_rich.append(np.sum(rich_pion_mask_bin[true_pions_bin]) / np.sum(true_pions_bin))
-        else:
-            pion_accuracies_rich.append(-1)
-
-        # Kaon misidentification (RICH)
-        if np.sum(true_kaons_bin) > 0:
-            kaon_misidentifications_rich.append(np.sum(rich_pion_mask_bin[true_kaons_bin]) / np.sum(true_kaons_bin))
-        else:
-            kaon_misidentifications_rich.append(-1)
-
-    # ------------------------------
-    # Plot both on same axes
-    # ------------------------------
-    axs_compare_rich[i].scatter(momentum_bin_centers[empty_momentum_mask], pion_accuracies_model, color='r', marker='o', label="GravNet $\pi^+$")
-    axs_compare_rich[i].scatter(momentum_bin_centers[empty_momentum_mask], kaon_misidentifications_model, color='b', marker='o', label="GravNet $K^+$")
-    
-    axs_compare_rich[i].scatter(momentum_bin_centers[empty_momentum_mask], pion_accuracies_rich, color='r', marker='s', label="RICH $\pi^+$", facecolor='none')
-    axs_compare_rich[i].scatter(momentum_bin_centers[empty_momentum_mask], kaon_misidentifications_rich, color='b', marker='s', label="RICH $K^+$", facecolor='none')
-
-    axs_compare_rich[i].set_xlabel("p (GeV)", fontsize=12)
-    axs_compare_rich[i].set_ylabel("Efficiency of passing $\pi^+$ cut", fontsize=12)
-    axs_compare_rich[i].set_title(f"Probability Threshold = {threshold}", fontsize=12)
-    axs_compare_rich[i].set_ylim(-0.1, 1.1)
-    axs_compare_rich[i].grid()
-    axs_compare_rich[i].legend(fontsize=12)
-
-plt.suptitle(plot_title)
-plt.tight_layout()
-plt.savefig(plot_directory+'model_vs_RICH_PID_comparison.png')
-plt.show()
-
-plt.figure()
-plt.hist2d(np.array(reconstructed_momentum)[pion_events_mask], np.array(cherenkov_angles)[pion_events_mask], bins=100, range=((0,10), (.05,.4)), norm=colors.LogNorm())
-plt.colorbar()
-plt.xlabel('p (GeV/c)')
-plt.ylabel('$\\theta_{C}$ (rad)')
-plt.title(plot_title+ "\n Pion events")
-plt.grid(True)
-plt.show()
-plt.savefig(plot_directory+"cherenkov_angles_pions.png")
-
-plt.figure()
-plt.hist2d(np.array(reconstructed_momentum)[kaon_events_mask], np.array(cherenkov_angles)[kaon_events_mask], bins=100, range=((0,10), (.05,.4)), norm=colors.LogNorm())
-plt.colorbar()
-plt.xlabel('p (GeV/c)')
-plt.ylabel('$\\theta_{C}$ (rad)')
-plt.title(plot_title+ "\n Kaon events")
-plt.grid(True)
-plt.show()
-plt.savefig(plot_directory+"cherenkov_angles_kaons.png")
-
-model_pion_mask = (model_probabilities_for_pions > 0.5)
-plt.figure()
-plt.hist2d(np.array(reconstructed_momentum)[model_pion_mask], np.array(cherenkov_angles)[model_pion_mask], bins=100, range=((0,7), (-.05,.4)), norm=colors.LogNorm())
-plt.colorbar()
-plt.xlabel('p (GeV/c)')
-plt.ylabel('$\\theta_{C}$ (rad)')
-plt.title(plot_title)
-plt.grid(True)
-plt.tight_layout()
-plt.show()
-plt.savefig(plot_directory+f"cherenkov_angles_pionmask.png")
-
-model_kaon_mask = (model_probabilities_for_pions < 0.5)
-plt.figure()
-plt.hist2d(np.array(reconstructed_momentum)[model_kaon_mask], np.array(cherenkov_angles)[model_kaon_mask], bins=100, range=((0,7), (-.05,.4)), norm=colors.LogNorm())
-plt.colorbar()
-plt.xlabel('p (GeV/c)')
-plt.ylabel('$\\theta_{C}$ (rad)')
-plt.title(plot_title)
-plt.grid(True)
-plt.tight_layout()
-plt.show()
-plt.savefig(plot_directory+f"cherenkov_angles_kaonmask.png")
-
-print(len(reconstructed_momentum), len(rec_theta))
-
-# mask_names = [all_events, pions_as_pions, pions_as_kaons, kaons_as_pions, kaons_as_kaons]
-mask_names = ["all_events", "pions_as_pions", "pions_as_kaons", "kaons_as_pions", "kaons_as_kaons"]
-kaon_pion_masks = [
-    (np.full_like(reconstructed_momentum, True, dtype=bool))   & (reconstructed_momentum   >3.15) & (reconstructed_momentum   < 3.7),
-    (pion_events_mask) & (model_probabilities_for_pions > 0.8) & (reconstructed_momentum >3.15) & (reconstructed_momentum < 3.7),
-    (pion_events_mask) & (model_probabilities_for_pions < 0.8) & (reconstructed_momentum >3.15) & (reconstructed_momentum < 3.7),
-    (kaon_events_mask) & (model_probabilities_for_pions > 0.8) & (reconstructed_momentum >3.15) & (reconstructed_momentum < 3.7),
-    (kaon_events_mask) & (model_probabilities_for_pions < 0.8) & (reconstructed_momentum >3.15) & (reconstructed_momentum < 3.7),
-]
-
-# kaon_pion_masks = [
-#     (np.full_like(reconstructed_momentum, True, dtype=bool))  ,
-#     (pion_events_mask) & (model_probabilities_for_pions > 0.8),
-#     (pion_events_mask) & (model_probabilities_for_pions < 0.8),
-#     (kaon_events_mask) & (model_probabilities_for_pions > 0.8),
-#     (kaon_events_mask) & (model_probabilities_for_pions < 0.8),
-# ]
-title_dict = {
-    "all_events": "All events",
-    "pions_as_pions": "Pions classified as pions",
-    "pions_as_kaons": "Pions classified as kaons",
-    "kaons_as_pions": "Kaons classified as pions",
-    "kaons_as_kaons": "Kaons classified as kaons",
+hep.style.use("CMS")
+
+# ============================================================================
+# Configuration
+# ============================================================================
+
+CONFIG = {
+    "model_dir": "/volatile/clas12/rmilton/trained_RICH_models/12_2025_dataset/RICH_models_rgaspring2018reco_crossentropy_adjustedpadding_withLRscheduler_earlystop_withlayernum_onehot_fourlayers_withdropout/",
+    "plot_dir": "./plots_rgaspring2018reco_crossentropy_adjustedpadding_withLRscheduler_earlystop_withlayernum_onehot_fourlayers_withdropout_softmax/",
+    "plot_title": "RICH Sector 4 positives\n Four GravNet layers + dropout",
+    "momentum_bins": np.linspace(1.5, 8, 11),
+    "min_multiplicity": 0,
+    "probability_thresholds": [0.2, 0.4, 0.5, 0.7, 0.8, 0.9],
+    "default_threshold": 0.7,
+    "pion_pid": 211,
+    "kaon_pid": 321,
 }
-for mask, mask_name in zip(kaon_pion_masks, mask_names):
 
-    fig = plt.figure()
-    plt.hist2d(
-        reconstructed_momentum[mask],
-        np.array(rec_theta[mask]),
-        bins=100,
-        range=((1,10), (0,25)),
-        norm=colors.LogNorm()
+os.makedirs(CONFIG["plot_dir"], exist_ok=True)
+
+
+# ============================================================================
+# Data Loading and Processing
+# ============================================================================
+
+
+def _tensor_to_numpy(tensor):
+    """Convert PyTorch tensor to numpy array."""
+    return tensor.cpu().detach().numpy()
+
+
+def _unpack_rich_hits(hits_padded, mask_padded):
+    """Unpack padded RICH hit data using masks."""
+    hits = []
+    for batch_hits, batch_mask in zip(hits_padded, mask_padded):
+        for event_hits, event_mask in zip(batch_hits, batch_mask):
+            valid = event_mask.cpu().numpy().astype(bool)
+            hits.append(event_hits.cpu().numpy()[valid])
+    return ak.Array(hits)
+
+
+def load_predictions(model_dir):
+    """Load model predictions and return processed data."""
+    predictions = torch.load(os.path.join(model_dir, "test_predictions.pt"))
+
+    # Apply Cherenkov angle cut
+    cherenkov_angles = _tensor_to_numpy(predictions["RICH_cherenkov_angle"])[:, 0]
+    valid_cut = cherenkov_angles > 0
+
+    # Extract and apply cut to all quantities
+    rich_pid_data = _tensor_to_numpy(predictions["RICH_PID"])[valid_cut]
+    # Handle both 1D and 2D RICH_PID arrays
+    if rich_pid_data.ndim > 1:
+        rich_pid_data = rich_pid_data[:, 0]
+    data = {
+        "cherenkov_angles": cherenkov_angles[valid_cut],
+        "aerogel_layers": ak.flatten(
+            _tensor_to_numpy(predictions["RICH_aerogel_layer"])
+        )[valid_cut],
+        "model_probs": _tensor_to_numpy(predictions["probabilities"])[valid_cut],
+        "true_labels": _tensor_to_numpy(predictions["labels"])[valid_cut],
+        "reco_pid": _tensor_to_numpy(predictions["reco_pid"])[:, 0][valid_cut],
+        "reco_momentum": _tensor_to_numpy(predictions["reco_momentum"])[valid_cut],
+        "rich_pid": rich_pid_data,
+        "rich_rq": _tensor_to_numpy(predictions["RICH_RQ"])[valid_cut],
+        "traj_x": _tensor_to_numpy(predictions["reco_traj_x"])[valid_cut],
+        "traj_y": _tensor_to_numpy(predictions["reco_traj_y"])[valid_cut],
+        "traj_cx": _tensor_to_numpy(predictions["reco_traj_cx"])[valid_cut],
+        "traj_cy": _tensor_to_numpy(predictions["reco_traj_cy"])[valid_cut],
+        "traj_cz": _tensor_to_numpy(predictions["reco_traj_cz"])[valid_cut],
+        "theta": ak.flatten(_tensor_to_numpy(predictions["reco_theta"]))[valid_cut],
+        "phi": ak.flatten(_tensor_to_numpy(predictions["reco_phi"]))[valid_cut],
+    }
+
+    # Unscaling cx, cy, cz
+    data["traj_cx"] = 2 * data["traj_cx"] - 1
+    data["traj_cy"] = 2 * data["traj_cy"] - 1
+    data["traj_cz"] = 2 * data["traj_cz"] - 1
+
+    # Unpack padded RICH hit data
+    rich_hits_x = _unpack_rich_hits(
+        predictions["RICH_hits_x"], predictions["RICH_hits_mask"]
+    )[valid_cut]
+    rich_hits_y = _unpack_rich_hits(
+        predictions["RICH_hits_y"], predictions["RICH_hits_mask"]
+    )[valid_cut]
+    rich_hits_time = _unpack_rich_hits(
+        predictions["RICH_hits_time"], predictions["RICH_hits_mask"]
+    )[valid_cut]
+
+    data["hits_x"] = rich_hits_x
+    data["hits_y"] = rich_hits_y
+    data["hits_time"] = rich_hits_time
+    print("done loading data")
+    return data
+
+
+def load_losses(model_dir):
+    """Load training/validation losses."""
+    losses = torch.load(os.path.join(model_dir, "training_losses.pt"))
+    return {
+        "epochs": [losses[i]["epoch"] for i in range(len(losses))],
+        "train": [losses[i]["train_loss"] for i in range(len(losses))],
+        "val": [losses[i]["val_loss"] for i in range(len(losses))],
+    }
+
+
+def apply_multiplicity_cut(data, min_hits=10):
+    """Filter events by RICH hit multiplicity."""
+    mult_mask = ak.num(data["hits_x"], axis=1) > min_hits
+
+    for key in data:
+        if isinstance(data[key], (np.ndarray, ak.Array)):
+            data[key] = data[key][mult_mask]
+
+    return data
+
+
+def extract_event_masks(data):
+    """Extract pion/kaon event masks from true labels."""
+    pion_mask = (data["true_labels"] == [1, 0])[:, 0]
+    kaon_mask = (data["true_labels"] == [0, 1])[:, 0]
+    return pion_mask, kaon_mask
+
+
+# ============================================================================
+# Metrics Calculation
+# ============================================================================
+
+
+def calculate_efficiency(true_mask, pred_mask, n_total):
+    """Calculate efficiency and binomial error."""
+    if n_total == 0:
+        return -1, -1
+
+    n_correct = np.sum(pred_mask & true_mask)
+    efficiency = n_correct / n_total
+    error = np.sqrt(efficiency * (1 - efficiency) / n_total)
+    return efficiency, error
+
+
+def calculate_efficiencies_1d(variable, bins, true_mask, pred_mask):
+    """Calculate efficiencies binned in a 1D variable.
+
+    Args:
+        variable: 1D array of values to bin
+        bins: bin edges (n_bins+1 values)
+        true_mask: boolean mask for true events
+        pred_mask: boolean mask for predicted events
+
+    Returns:
+        dict with 'effs', 'errs', 'n_true', 'n_pred', 'bin_centers'
+    """
+    n_bins = len(bins) - 1
+    effs = np.full(n_bins, -1.0)
+    errs = np.full(n_bins, -1.0)
+    n_true = np.zeros(n_bins, dtype=int)
+    n_pred = np.zeros(n_bins, dtype=int)
+
+    for i in range(n_bins):
+        mask = (variable >= bins[i]) & (variable < bins[i + 1])
+        if i == n_bins - 1:  # Include right edge in last bin
+            mask = (variable >= bins[i]) & (variable <= bins[i + 1])
+
+        n_true[i] = np.sum(true_mask & mask)
+        n_correct = np.sum((true_mask & pred_mask) & mask)
+
+        if n_true[i] > 0:
+            effs[i] = n_correct / n_true[i]
+            errs[i] = np.sqrt(effs[i] * (1 - effs[i]) / n_true[i])
+
+    bin_centers = (bins[:-1] + bins[1:]) / 2
+
+    return {
+        "effs": effs,
+        "errs": errs,
+        "n_true": n_true,
+        "bin_centers": bin_centers,
+    }
+
+
+def calculate_efficiencies_2d(var1, bins1, var2, bins2, true_mask, pred_mask):
+    """Calculate efficiencies binned in two variables (2D).
+
+    Args:
+        var1, var2: 1D arrays of values to bin
+        bins1, bins2: bin edges for each variable
+        true_mask: boolean mask for true events
+        pred_mask: boolean mask for predicted events
+
+    Returns:
+        dict with 'effs_2d' (n1 x n2), 'errs_2d', 'bin_centers1', 'bin_centers2', etc.
+    """
+    n_bins1 = len(bins1) - 1
+    n_bins2 = len(bins2) - 1
+    effs_2d = np.full((n_bins1, n_bins2), -1.0)
+    errs_2d = np.full((n_bins1, n_bins2), -1.0)
+    n_true_2d = np.zeros((n_bins1, n_bins2), dtype=int)
+
+    for i in range(n_bins1):
+        mask1 = (var1 >= bins1[i]) & (var1 < bins1[i + 1])
+        if i == n_bins1 - 1:
+            mask1 = (var1 >= bins1[i]) & (var1 <= bins1[i + 1])
+
+        for j in range(n_bins2):
+            mask2 = (var2 >= bins2[j]) & (var2 < bins2[j + 1])
+            if j == n_bins2 - 1:
+                mask2 = (var2 >= bins2[j]) & (var2 <= bins2[j + 1])
+
+            bin_mask = mask1 & mask2
+            n_true_2d[i, j] = np.sum(true_mask & bin_mask)
+            n_correct_2d = np.sum((true_mask & pred_mask) & bin_mask)
+
+            if n_true_2d[i, j] > 0:
+                effs_2d[i, j] = n_correct_2d / n_true_2d[i, j]
+                errs_2d[i, j] = np.sqrt(
+                    effs_2d[i, j] * (1 - effs_2d[i, j]) / n_true_2d[i, j]
+                )
+
+    bin_centers1 = (bins1[:-1] + bins1[1:]) / 2
+    bin_centers2 = (bins2[:-1] + bins2[1:]) / 2
+
+    return {
+        "effs_2d": effs_2d,
+        "errs_2d": errs_2d,
+        "n_true_2d": n_true_2d,
+        "bin_centers1": bin_centers1,
+        "bin_centers2": bin_centers2,
+    }
+
+
+def calculate_bin_metrics(
+    prob_bin,
+    true_mask_bin,
+    reco_pid_bin,
+    rich_pid_bin,
+    threshold,
+    pion_pid_val,
+    kaon_pid_val,
+):
+    """Calculate efficiency metrics for a momentum/threshold bin."""
+    if len(prob_bin) == 0:
+        return None
+
+    # Model metrics
+    model_pion_mask = prob_bin > threshold
+    n_true_pions = np.sum(true_mask_bin)
+    n_true_kaons = np.sum(~true_mask_bin)
+
+    pion_eff, pion_err = calculate_efficiency(
+        true_mask_bin, model_pion_mask, n_true_pions
     )
+    kaon_misid, kaon_misid_err = calculate_efficiency(
+        ~true_mask_bin, model_pion_mask, n_true_kaons
+    )
+
+    # Kaon efficiency (reverse of pion)
+    kaon_eff, kaon_err = calculate_efficiency(
+        ~true_mask_bin, ~model_pion_mask, n_true_kaons
+    )
+    pion_misid, pion_misid_err = calculate_efficiency(
+        true_mask_bin, ~model_pion_mask, n_true_pions
+    )
+
+    # Reconstructed PID metrics
+    reco_pion_mask = reco_pid_bin == pion_pid_val
+    reco_pion_eff, reco_pion_err = calculate_efficiency(
+        true_mask_bin, reco_pion_mask, n_true_pions
+    )
+    reco_kaon_misid, reco_kaon_misid_err = calculate_efficiency(
+        ~true_mask_bin, reco_pion_mask, n_true_kaons
+    )
+    reco_kaon_eff, reco_kaon_err = calculate_efficiency(
+        ~true_mask_bin, ~reco_pion_mask, n_true_kaons
+    )
+    reco_pion_misid, reco_pion_misid_err = calculate_efficiency(
+        true_mask_bin, ~reco_pion_mask, n_true_pions
+    )
+
+    # RICH PID metrics
+    rich_pion_mask = rich_pid_bin == pion_pid_val
+    rich_pion_eff, rich_pion_err = calculate_efficiency(
+        true_mask_bin, rich_pion_mask, n_true_pions
+    )
+    rich_kaon_misid, rich_kaon_misid_err = calculate_efficiency(
+        ~true_mask_bin, rich_pion_mask, n_true_kaons
+    )
+    rich_kaon_eff, rich_kaon_err = calculate_efficiency(
+        ~true_mask_bin, ~rich_pion_mask, n_true_kaons
+    )
+    rich_pion_misid, rich_pion_misid_err = calculate_efficiency(
+        true_mask_bin, ~rich_pion_mask, n_true_pions
+    )
+
+    return {
+        # Pion identification
+        "pion_eff": pion_eff,
+        "pion_err": pion_err,
+        "reco_pion_eff": reco_pion_eff,
+        "reco_pion_err": reco_pion_err,
+        "rich_pion_eff": rich_pion_eff,
+        "rich_pion_err": rich_pion_err,
+        # Kaon misidentification as pion
+        "kaon_misid": kaon_misid,
+        "kaon_misid_err": kaon_misid_err,
+        "reco_kaon_misid": reco_kaon_misid,
+        "reco_kaon_misid_err": reco_kaon_misid_err,
+        "rich_kaon_misid": rich_kaon_misid,
+        "rich_kaon_misid_err": rich_kaon_misid_err,
+        # Kaon identification
+        "kaon_eff": kaon_eff,
+        "kaon_err": kaon_err,
+        "reco_kaon_eff": reco_kaon_eff,
+        "reco_kaon_err": reco_kaon_err,
+        "rich_kaon_eff": rich_kaon_eff,
+        "rich_kaon_err": rich_kaon_err,
+        # Pion misidentification as kaon
+        "pion_misid": pion_misid,
+        "pion_misid_err": pion_misid_err,
+        "reco_pion_misid": reco_pion_misid,
+        "reco_pion_misid_err": reco_pion_misid_err,
+        "rich_pion_misid": rich_pion_misid,
+        "rich_pion_misid_err": rich_pion_misid_err,
+    }
+
+
+# ============================================================================
+# Plotting Functions
+# ============================================================================
+
+
+def plot_loss_curves(losses, plot_dir, title):
+    """Plot training/validation loss curves."""
+    fig = plt.figure(figsize=(12, 8))
+    plt.plot(losses["epochs"], losses["train"], label="Training")
+    plt.plot(losses["epochs"], losses["val"], label="Validation")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss (CrossEntropy)")
+    plt.title(title)
+    plt.xlim(0, 500)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, "losses.png"))
+    plt.close()
+
+
+def plot_momentum_distributions(momentum, momentum_by_type, plot_dir, title):
+    """Plot momentum distributions."""
+    fig = plt.figure(figsize=(12, 8))
+    plt.hist(momentum, bins=50)
     plt.xlabel("p (GeV)")
-    plt.ylabel("$\\theta$ (deg.)")
-    plt.colorbar()
-    plt.title(plot_title+f"\n {title_dict[mask_name]}, threshold=0.8", fontsize=12)
+    plt.ylabel("Counts (log)")
+    plt.yscale("log")
+    plt.title(title)
     plt.tight_layout()
-    plt.savefig(plot_directory+f"theta_momentum_{mask_name}.png")
+    plt.savefig(os.path.join(plot_dir, "momentum.png"))
     plt.close()
 
+    fig = plt.figure(figsize=(12, 8))
+    for label, mask in momentum_by_type.items():
+        plt.hist(momentum[mask], bins=50, label=label, histtype="step")
+    plt.xlabel("p (GeV)")
+    plt.ylabel("Counts (log)")
+    plt.yscale("log")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, "momentum_by_particle.png"))
+    plt.close()
+
+
+def plot_multiplicity_distribution(multiplicity, plot_dir, title):
+    """Plot RICH hit multiplicity distribution."""
+    fig = plt.figure(figsize=(12, 8))
+    plt.hist(multiplicity, bins=np.linspace(0, 100, 101))
+    plt.yscale("log")
+    plt.xlabel("RICH hit multiplicity")
+    plt.ylabel("Counts (log)")
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, "multiplicity_distribution.png"))
+    plt.close()
+
+
+def plot_roc_curve(y_true, y_scores, plot_dir, title):
+    """Plot ROC curve."""
+    fpr, tpr, thresholds = roc_curve(y_true, y_scores)
+    roc_auc = auc(fpr, tpr)
+
+    plt.figure(figsize=(10, 8))
+    plt.plot(fpr, tpr, color="blue", lw=2, label=f"ROC (AUC={roc_auc:.3f})")
+    plt.plot([0, 1], [0, 1], color="gray", linestyle="--")
+    plt.xlabel(r"Pion misidentification ($\pi \to K$)")
+    plt.ylabel(r"Kaon efficiency ($K \to K$)")
+    plt.title(title)
+    plt.legend(loc="lower right")
+    plt.grid(True)
+
+    # Add threshold labels
+    for i in range(0, len(thresholds), max(1, len(thresholds) // 15)):
+        plt.text(
+            fpr[i],
+            tpr[i],
+            f"{thresholds[i]:.2f}",
+            fontsize=8,
+            ha="right",
+            va="bottom",
+            rotation=45,
+        )
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, "ROC.png"))
+    plt.close()
+
+    return roc_auc
+
+
+def plot_auc_vs_momentum(
+    momentum_bins,
+    pion_probs_per_bin,
+    pion_masks_per_bin,
+    plot_dir,
+    title,
+):
+    """Plot AUC vs momentum"""
+    from sklearn.metrics import roc_auc_score
+
+    momentum_bin_centers = (momentum_bins[1:] + momentum_bins[:-1]) / 2
+    bin_widths = (momentum_bin_centers[1] - momentum_bin_centers[0]) / 2
+
+    aucs, auc_errs, valid_centers = [], [], []
+
+    for i, (probs_bin, pion_mask_bin) in enumerate(
+        zip(pion_probs_per_bin, pion_masks_per_bin)
+    ):
+        # Need both classes present
+        if len(probs_bin) < 10 or len(np.unique(pion_mask_bin.astype(int))) < 2:
+            continue
+
+        labels_bin = pion_mask_bin.astype(int)
+        auc_val = roc_auc_score(labels_bin, probs_bin)
+
+        aucs.append(auc_val)
+        valid_centers.append(momentum_bin_centers[i])
+
+    valid_centers = np.array(valid_centers)
+    aucs = np.array(aucs)
+    auc_errs = np.array(auc_errs)
+
     fig = plt.figure()
-    plt.hist2d(
-        np.array(rec_traj_x[mask]),
-        np.array(rec_traj_y[mask]),
-        bins=50,
-        range=((0,1), (0,1)),
-        norm=colors.LogNorm()
+    plt.errorbar(
+        valid_centers,
+        aucs,
+        xerr=bin_widths,
+        marker="o",
+        color="black",
+        markersize=10,
+        linestyle="none",
+        label="GravNet AUC",
     )
-    plt.xlabel("Traj.x")
-    plt.ylabel("Traj.y")
-    plt.colorbar()
-    plt.title(plot_title+f"\n {title_dict[mask_name]}, threshold=0.8", fontsize=12)
+    plt.axhline(0.5, color="gray", linestyle="--", label="Random classifier")
+    plt.axhline(
+        1.0, color="green", linestyle="--", alpha=0.5, label="Perfect classifier"
+    )
+    plt.xlabel("p (GeV/c)")
+    plt.ylabel("AUC")
+    plt.title(f"{title}\nAUC vs Momentum")
+    plt.ylim(0.4, 1.05)
+    plt.legend(fontsize=11)
+    plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig(plot_directory+f"traj_xy_{mask_name}.png")
+    plt.savefig(os.path.join(plot_dir, "auc_vs_momentum.png"), dpi=300)
     plt.close()
 
+
+def plot_auc_vs_multiplicity(
+    data,
+    pion_mask,
+    threshold,
+    plot_dir,
+    title,
+):
+    """Plot AUC vs RICH hit multiplicity"""
+    from sklearn.metrics import roc_auc_score
+
+    mult_bins = np.linspace(0, 100, 21)  # 20 bins
+    mult_bin_centers = (mult_bins[1:] + mult_bins[:-1]) / 2
+    bin_widths = (mult_bin_centers[1] - mult_bin_centers[0]) / 2
+    multiplicity = ak.to_numpy(ak.num(data["hits_x"], axis=1))
+
+    aucs, auc_errs, valid_centers = [], [], []
+    rng = np.random.default_rng(42)
+
+    for i in range(len(mult_bins) - 1):
+        mask = (multiplicity >= mult_bins[i]) & (multiplicity < mult_bins[i + 1])
+        probs_bin = data["model_probs"][mask, 0]
+        labels_bin = pion_mask[mask].astype(int)
+
+        if len(probs_bin) < 10 or len(np.unique(labels_bin)) < 2:
+            continue
+
+        auc_val = roc_auc_score(labels_bin, probs_bin)
+
+        aucs.append(auc_val)
+        valid_centers.append(mult_bin_centers[i])
 
     fig = plt.figure()
-    plt.hist(ak.flatten(RICH_hits_time[mask]), bins=100, range=(0, 8000))
-    plt.xlabel("RICH Raw time (ns)")
-    plt.title(plot_title+f"\n {title_dict[mask_name]}, threshold=0.8", fontsize=12)
+    plt.errorbar(
+        np.array(valid_centers),
+        np.array(aucs),
+        xerr=bin_widths,
+        marker="o",
+        color="black",
+        markersize=10,
+        linestyle="none",
+        label="GravNet AUC",
+    )
+    plt.axhline(0.5, color="gray", linestyle="--", label="Random classifier")
+    plt.axhline(
+        1.0, color="green", linestyle="--", alpha=0.5, label="Perfect classifier"
+    )
+    plt.xlabel("RICH hit multiplicity")
+    plt.ylabel("AUC")
+    plt.title(f"{title}\nAUC vs Multiplicity")
+    plt.ylim(0.4, 1.05)
+    plt.legend(fontsize=11)
+    plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.yscale('log')
-    plt.savefig(plot_directory+f"RICH_hits_time_{mask_name}.png")
+    plt.savefig(os.path.join(plot_dir, "auc_vs_multiplicity.png"), dpi=300)
     plt.close()
 
+
+def plot_auc_2d_momentum_multiplicity(
+    data,
+    pion_mask,
+    momentum_bins,
+    plot_dir,
+    title,
+):
+    """Plot 2D AUC heatmap vs momentum and RICH hit multiplicity."""
+    from sklearn.metrics import roc_auc_score
+
+    mult_bins = np.linspace(0, 100, 21)
+    mult_bin_centers = (mult_bins[1:] + mult_bins[:-1]) / 2
+    momentum_bin_centers = (momentum_bins[1:] + momentum_bins[:-1]) / 2
+    multiplicity = ak.to_numpy(ak.num(data["hits_x"], axis=1))
+
+    n_mom = len(momentum_bins) - 1
+    n_mult = len(mult_bins) - 1
+    aucs_2d = np.full((n_mom, n_mult), np.nan)
+    rng = np.random.default_rng(42)
+
+    for i in range(n_mom):
+        mom_mask = (data["reco_momentum"] >= momentum_bins[i]) & (
+            data["reco_momentum"] < momentum_bins[i + 1]
+        )
+        for j in range(n_mult):
+            mult_mask = (multiplicity >= mult_bins[j]) & (
+                multiplicity < mult_bins[j + 1]
+            )
+            combined = mom_mask & mult_mask
+
+            probs_bin = data["model_probs"][combined, 0]
+            labels_bin = pion_mask[combined].astype(int)
+
+            if len(probs_bin) < 10 or len(np.unique(labels_bin)) < 2:
+                continue
+
+            aucs_2d[i, j] = roc_auc_score(labels_bin, probs_bin)
+
+    fig, ax = plt.subplots(figsize=(12, 9))
+    masked = np.ma.masked_invalid(aucs_2d)
+    im = ax.pcolormesh(
+        momentum_bin_centers,
+        mult_bin_centers,
+        masked.T,
+        cmap="RdYlGn",
+        vmin=0.5,
+        vmax=1.0,
+        shading="auto",
+    )
+    ax.set_xlabel("Momentum (GeV/c)")
+    ax.set_ylabel("RICH hit multiplicity")
+    ax.set_title(f"{title}\nAUC vs Momentum and Multiplicity")
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label("AUC", fontsize=12)
+    ax.grid(True, alpha=0.3, color="black", linestyle="--")
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, "auc_2d_momentum_vs_multiplicity.png"), dpi=300)
+    plt.close()
+
+
+def plot_pion_efficiency(
+    momentum_bin_centers, metrics, xerr, good_bins, plot_dir, title, threshold
+):
+    """Plot pion efficiency (π → π) vs momentum with model and RICH comparison."""
     fig = plt.figure()
-    plt.hist(ak.num(RICH_hits_time[mask], axis=1), bins=100, range=(-0.5, 99.5))
-    plt.xlabel("RICH Hit multiplicity")
-    plt.title(plot_title+f"\n {title_dict[mask_name]}, threshold=0.8", fontsize=12)
+
+    # Removing empty bins
+    filtered = [
+        (m, p, xe)
+        for m, p, xe in zip(metrics, momentum_bin_centers, xerr)
+        if m is not None
+    ]
+
+    metrics, momentum_bin_centers, xerr = zip(*filtered)
+
+    metrics = list(metrics)
+    momentum_bin_centers = np.array(momentum_bin_centers)
+    xerr = np.array(xerr)
+
+    # Model (GravNet) - solid red circles
+    pion_effs = np.array([m["pion_eff"] for m in metrics])
+    pion_errs = np.array([m["pion_err"] for m in metrics])
+    plt.errorbar(
+        momentum_bin_centers,
+        pion_effs,
+        xerr=xerr,
+        yerr=pion_errs,
+        label=r"GravNet $\pi^+ \to \pi^+$",
+        marker="o",
+        color="red",
+        markersize=10,
+        linestyle="none",
+    )
+
+    # RICH - open red squares
+    rich_pion_effs = np.array([m["rich_pion_eff"] for m in metrics])
+    rich_pion_errs = np.array([m["rich_pion_err"] for m in metrics])
+    plt.errorbar(
+        momentum_bin_centers,
+        rich_pion_effs,
+        xerr=xerr,
+        yerr=rich_pion_errs,
+        label=r"RICH $\pi^+ \to \pi^+$",
+        marker="s",
+        color="red",
+        markersize=10,
+        markerfacecolor="none",
+        linestyle="none",
+    )
+
+    # Kaon misidentification (K → π)
+    kaon_misids = np.array([m["kaon_misid"] for m in metrics])
+    kaon_misid_errs = np.array([m["kaon_misid_err"] for m in metrics])
+    plt.errorbar(
+        momentum_bin_centers,
+        kaon_misids,
+        xerr=xerr,
+        yerr=kaon_misid_errs,
+        label=r"GravNet $K^+ \to \pi^+$",
+        marker="o",
+        color="blue",
+        markersize=10,
+        linestyle="none",
+    )
+
+    # RICH kaon misidentification
+    rich_kaon_misids = np.array([m["rich_kaon_misid"] for m in metrics])
+    rich_kaon_misid_errs = np.array([m["rich_kaon_misid_err"] for m in metrics])
+    plt.errorbar(
+        momentum_bin_centers,
+        rich_kaon_misids,
+        xerr=xerr,
+        yerr=rich_kaon_misid_errs,
+        label=r"RICH $K^+ \to \pi^+$",
+        marker="s",
+        color="blue",
+        markersize=10,
+        markerfacecolor="none",
+        linestyle="none",
+    )
+
+    plt.xlabel("p (GeV/c)")
+    plt.ylabel(r"Efficiency of passing $\pi^+$ cut")
+    plt.title(f"{title}\nThreshold = {threshold}")
+    plt.legend(fontsize=11, loc="best")
+    plt.grid(True)
+    plt.ylim(-0.04, 1.04)
     plt.tight_layout()
-    plt.yscale('log')
-    plt.savefig(plot_directory+f"RICH_hits_multiplicity_{mask_name}.png")
+    plt.savefig(
+        os.path.join(plot_dir, f"efficiency_pion_threshold_{threshold}.png"), dpi=300
+    )
     plt.close()
 
 
-    if mask_name in ["kaons_as_pions", "pions_as_pions"]:
+def plot_kaon_efficiency(
+    momentum_bin_centers, metrics, xerr, good_bins, plot_dir, title
+):
+    """Plot kaon efficiency (K → K) vs momentum with model and RICH comparison."""
+    fig = plt.figure()
 
-        # Extract valid indices from the mask
-        masked_indices = np.where(mask)[0]
+    # Removing empty bins
+    filtered = [
+        (m, p, xe)
+        for m, p, xe in zip(metrics, momentum_bin_centers, xerr)
+        if m is not None
+    ]
 
-        # Sort them by model probability (descending)
-        sorted_indices = masked_indices[
-            np.argsort(model_probabilities_for_pions[masked_indices])[::-1]
-        ]
+    metrics, momentum_bin_centers, xerr = zip(*filtered)
 
-        # Take the top 20 events
-        top_events = sorted_indices[:20]
+    metrics = list(metrics)
+    momentum_bin_centers = np.array(momentum_bin_centers)
+    xerr = np.array(xerr)
 
-        for j, event_idx in enumerate(top_events):
-            
-            prob = model_probabilities_for_pions[event_idx]
+    # Model (GravNet) - solid red circles
+    kaon_effs = np.array([m["kaon_eff"] for m in metrics])
+    kaon_errs = np.array([m["kaon_err"] for m in metrics])
+    plt.errorbar(
+        momentum_bin_centers,
+        kaon_effs,
+        xerr=xerr,
+        yerr=kaon_errs,
+        label=r"GravNet $K^+ \to K^+$",
+        marker="o",
+        color="red",
+        markersize=10,
+        linestyle="none",
+    )
 
-            fig = plt.figure()
-            plt.scatter(
-                np.array(RICH_hits_x[event_idx]),
-                np.array(RICH_hits_y[event_idx]),
+    # RICH - open red squares
+    rich_kaon_effs = np.array([m["rich_kaon_eff"] for m in metrics])
+    rich_kaon_errs = np.array([m["rich_kaon_err"] for m in metrics])
+    plt.errorbar(
+        momentum_bin_centers,
+        rich_kaon_effs,
+        xerr=xerr,
+        yerr=rich_kaon_errs,
+        label=r"RICH $K^+ \to K^+$",
+        marker="s",
+        color="red",
+        markersize=10,
+        markerfacecolor="none",
+        linestyle="none",
+    )
+
+    # Pion misidentification (π → K)
+    pion_misids = np.array([m["pion_misid"] for m in metrics])
+    pion_misid_errs = np.array([m["pion_misid_err"] for m in metrics])
+    plt.errorbar(
+        momentum_bin_centers,
+        pion_misids,
+        xerr=xerr,
+        yerr=pion_misid_errs,
+        label=r"GravNet $\pi^+ \to K^+$",
+        marker="o",
+        color="blue",
+        markersize=10,
+        linestyle="none",
+    )
+
+    # RICH pion misidentification
+    rich_pion_misids = np.array([m["rich_pion_misid"] for m in metrics])
+    rich_pion_misid_errs = np.array([m["rich_pion_misid_err"] for m in metrics])
+    plt.errorbar(
+        momentum_bin_centers,
+        rich_pion_misids,
+        xerr=xerr,
+        yerr=rich_pion_misid_errs,
+        label=r"RICH $\pi^+ \to K^+$",
+        marker="s",
+        color="blue",
+        markersize=10,
+        markerfacecolor="none",
+        linestyle="none",
+    )
+
+    plt.xlabel("p (GeV/c)")
+    plt.ylabel(r"Efficiency of passing $K^+$ cut")
+    plt.title(f"{title}\n$K^+$ ID Efficiency")
+    plt.legend(fontsize=11, loc="best")
+    plt.grid(True)
+    plt.ylim(-0.04, 1.04)
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, "efficiency_kaon.png"), dpi=300)
+    plt.close()
+
+
+def plot_probability_distributions(
+    momentum_bins,
+    pion_probs_per_bin,
+    pion_masks_per_bin,
+    pion_mask,
+    kaon_mask,
+    plot_dir,
+    title,
+):
+    """Plot model probability distributions binned by momentum.
+
+    Shows 5x2 subplots for kaon and pion probabilities in each momentum bin.
+    """
+    momentum_bin_centers = (momentum_bins[1:] + momentum_bins[:-1]) / 2
+
+    # Kaon probabilities (model_probs[:, 1])
+    fig_kaons, axs_kaons = plt.subplots(nrows=5, ncols=2, figsize=(12, 16))
+    axs_kaons = axs_kaons.flatten()
+
+    for i, (probs_bin, pion_mask_bin) in enumerate(
+        zip(pion_probs_per_bin, pion_masks_per_bin)
+    ):
+        if len(probs_bin) == 0:
+            axs_kaons[i].text(0.5, 0.5, "No events", ha="center", va="center")
+            continue
+
+        kaon_mask_bin = ~pion_mask_bin
+        kaon_probs = 1 - probs_bin  # K probability = 1 - π probability
+
+        axs_kaons[i].hist(
+            kaon_probs[kaon_mask_bin],
+            range=(0, 1),
+            bins=100,
+            label=f"True label: $K^+$",
+            alpha=0.5,
+        )
+
+        axs_kaons[i].hist(
+            kaon_probs[pion_mask_bin],
+            range=(0, 1),
+            bins=100,
+            label=f"True label: $\pi^+$",
+            alpha=0.5,
+        )
+
+        lower, upper = momentum_bins[i], momentum_bins[i + 1]
+        total_counts = len(probs_bin)
+        axs_kaons[i].set_title(
+            f"${lower:.3f} \leq p < {upper:.3f}$ GeV\nTotal = {total_counts}",
+            fontsize=11,
+        )
+        axs_kaons[i].legend(fontsize=10)
+
+    plt.suptitle(f"{title}\nModel Probability for $K^+$")
+    plt.xlabel("Probability event contains $K^+$")
+    plt.ylabel("Entries")
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, "kaon_probabilities.png"), dpi=300)
+    plt.close()
+
+    # Pion probabilities (model_probs[:, 0])
+    fig_pions, axs_pions = plt.subplots(nrows=5, ncols=2, figsize=(12, 16))
+    axs_pions = axs_pions.flatten()
+
+    for i, (probs_bin, pion_mask_bin) in enumerate(
+        zip(pion_probs_per_bin, pion_masks_per_bin)
+    ):
+        if len(probs_bin) == 0:
+            axs_pions[i].text(0.5, 0.5, "No events", ha="center", va="center")
+            continue
+
+        kaon_mask_bin = ~pion_mask_bin
+
+        axs_pions[i].hist(
+            probs_bin[kaon_mask_bin],
+            range=(0, 1),
+            bins=100,
+            label=f"True label: $K^+$",
+            alpha=0.5,
+        )
+
+        counts, edges, _ = axs_pions[i].hist(
+            probs_bin[pion_mask_bin],
+            range=(0, 1),
+            bins=100,
+            label=f"True label: $\pi^+$",
+            alpha=0.5,
+        )
+
+        lower, upper = momentum_bins[i], momentum_bins[i + 1]
+        total_counts = len(probs_bin)
+        pion_count = np.sum(pion_mask_bin)
+        kaon_count = np.sum(kaon_mask_bin)
+
+        axs_pions[i].set_title(
+            f"${lower:.3f} \leq p < {upper:.3f}$ GeV\n"
+            f"$\pi^+$ count = {pion_count}, $K^+$ count = {kaon_count}",
+            fontsize=11,
+        )
+        axs_pions[i].legend(fontsize=10)
+
+    plt.suptitle(f"{title}\nModel Probability for $\pi^+$")
+    plt.xlabel("Probability event contains $\pi^+$")
+    plt.ylabel("Entries")
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, "pion_probabilities.png"), dpi=300)
+    plt.close()
+
+
+def plot_threshold_efficiency_comparison(
+    momentum_bins, pion_probs_per_bin, pion_masks_per_bin, thresholds, plot_dir, title
+):
+    """Plot efficiency vs momentum for different probability thresholds.
+
+    Shows 2x3 subplots for 6 different thresholds.
+    """
+    momentum_bin_centers = (momentum_bins[1:] + momentum_bins[:-1]) / 2
+
+    fig, axes = plt.subplots(nrows=2, ncols=3, figsize=(16, 10))
+    axes = axes.flatten()
+
+    for ax_idx, threshold in enumerate(thresholds):
+        ax = axes[ax_idx]
+
+        pion_effs = []
+        kaon_misids = []
+        valid_bins = []
+
+        for probs_bin, pion_mask_bin in zip(pion_probs_per_bin, pion_masks_per_bin):
+            if len(probs_bin) == 0:
+                pion_effs.append(-1)
+                kaon_misids.append(-1)
+                valid_bins.append(False)
+                continue
+
+            # Apply threshold
+            pion_pred_mask = probs_bin > threshold
+
+            n_true_pions = np.sum(pion_mask_bin)
+            n_true_kaons = np.sum(~pion_mask_bin)
+
+            # Pion efficiency
+            if n_true_pions > 0:
+                pion_eff = np.sum(pion_pred_mask & pion_mask_bin) / n_true_pions
+                pion_effs.append(pion_eff)
+            else:
+                pion_effs.append(-1)
+
+            # Kaon misidentification
+            if n_true_kaons > 0:
+                kaon_misid = np.sum(pion_pred_mask & ~pion_mask_bin) / n_true_kaons
+                kaon_misids.append(kaon_misid)
+            else:
+                kaon_misids.append(-1)
+
+            valid_bins.append(True)
+
+        # Plot valid bins only
+        valid_bins = np.array(valid_bins)
+        pion_effs = np.array(pion_effs)
+        kaon_misids = np.array(kaon_misids)
+
+        if np.sum(valid_bins) > 0:
+            ax.scatter(
+                momentum_bin_centers[valid_bins],
+                pion_effs[valid_bins],
+                label=r"$\pi^+$ efficiency",
+                marker="o",
+                color="red",
+                s=100,
+            )
+            ax.scatter(
+                momentum_bin_centers[valid_bins],
+                kaon_misids[valid_bins],
+                label=r"$K^+ \to \pi^+$ misid",
+                marker="s",
+                color="blue",
+                s=100,
             )
 
-            plt.xlabel("RICH x (cm)")
-            plt.ylabel("RICH y (cm)")
-            plt.xlim(-150, -30)
-            plt.ylim(-75, 75)
-            plt.title(plot_title + f"\n {title_dict[mask_name]}, pion probability = {prob}",
-                    fontsize=12)
+        ax.set_xlabel("p (GeV)", fontsize=11)
+        ax.set_ylabel("Efficiency", fontsize=11)
+        ax.set_title(f"Threshold = {threshold}", fontsize=12)
+        ax.set_ylim(-0.1, 1.1)
+        ax.legend(fontsize=10)
+        ax.grid(True, alpha=0.3)
+
+    plt.suptitle(f"{title}\nEfficiency vs Probability Threshold")
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, "threshold_efficiencies.png"), dpi=300)
+    plt.close()
+
+
+def plot_efficiency_1d(
+    bin_centers,
+    effs,
+    errs,
+    label_var,
+    threshold,
+    plot_dir,
+    filename,
+    title,
+):
+    """Plot 1D efficiency vs variable with error bars.
+
+    Args:
+        bin_centers: centers of bins
+        effs: efficiency values
+        errs: efficiency errors
+        label_var: label for x-axis variable
+        threshold: probability threshold used
+        plot_dir: directory to save plot
+        filename: output filename (without directory)
+        title: plot title
+    """
+    fig = plt.figure(figsize=(12, 8))
+
+    valid = effs > -0.5  # Filter out -1 (empty bins)
+    if np.sum(valid) > 0:
+        plt.errorbar(
+            bin_centers[valid],
+            effs[valid],
+            yerr=errs[valid],
+            label=r"$\pi^+$ efficiency",
+            marker="o",
+            color="red",
+            markersize=10,
+            linestyle="none",
+        )
+
+    plt.xlabel(label_var, fontsize=12)
+    plt.ylabel(r"Efficiency", fontsize=12)
+    plt.title(f"{title}\nThreshold = {threshold}")
+    plt.legend(fontsize=11)
+    plt.grid(True, alpha=0.3)
+    plt.ylim(-0.04, 1.04)
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, filename), dpi=300)
+    plt.close()
+
+
+def plot_efficiency_2d(
+    bin_centers1,
+    bin_centers2,
+    effs_2d,
+    label_var1,
+    label_var2,
+    threshold,
+    plot_dir,
+    filename,
+    title,
+):
+    """Plot 2D efficiency heatmap.
+
+    Args:
+        bin_centers1, bin_centers2: bin centers for each axis
+        effs_2d: 2D array of efficiencies (n1 x n2)
+        label_var1, label_var2: axis labels
+        threshold: probability threshold used
+        plot_dir: directory to save plot
+        filename: output filename
+        title: plot title
+    """
+    fig, ax = plt.subplots(figsize=(12, 9))
+
+    # Mask out empty bins (-1) for display
+    effs_masked = np.ma.masked_where(effs_2d < 0, effs_2d)
+
+    im = ax.pcolormesh(
+        bin_centers1,
+        bin_centers2,
+        effs_masked.T,
+        cmap="RdYlGn",
+        vmin=0,
+        vmax=1,
+        shading="auto",
+    )
+
+    ax.set_xlabel(label_var1, fontsize=12)
+    ax.set_ylabel(label_var2, fontsize=12)
+    ax.set_title(f"{title}\nThreshold = {threshold}")
+
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label(r"$\pi^+$ Efficiency", fontsize=12)
+
+    # Add grid
+    ax.grid(True, alpha=0.3, color="black", linestyle="--")
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, filename), dpi=300)
+    plt.close()
+
+
+def plot_2d_histogram(
+    var1,
+    bins1,
+    var2,
+    bins2,
+    label_var1,
+    label_var2,
+    plot_dir,
+    filename,
+    title,
+):
+    """Plot 2D histogram of counts.
+
+    Args:
+        var1, var2: 1D arrays of values to bin
+        bins1, bins2: bin edges for each variable
+        label_var1, label_var2: axis labels
+        plot_dir: directory to save plot
+        filename: output filename
+        title: plot title
+    """
+    fig, ax = plt.subplots(figsize=(12, 9))
+
+    h = ax.hist2d(
+        np.array(var1),
+        np.array(var2),
+        bins=[bins1, bins2],
+        cmap="viridis",
+        norm=colors.LogNorm(),
+    )
+
+    ax.set_xlabel(label_var1, fontsize=12)
+    ax.set_ylabel(label_var2, fontsize=12)
+    ax.set_title(f"{title}\nEvent counts")
+
+    cbar = plt.colorbar(h[3], ax=ax)
+    cbar.set_label("Counts (log scale)", fontsize=12)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, filename), dpi=300)
+    plt.close()
+
+
+# ============================================================================
+# Main Analysis
+# ============================================================================
+
+
+def main():
+    """Run complete analysis."""
+    print(f"Loading data from {CONFIG['model_dir']}")
+
+    # Load data
+    data = load_predictions(CONFIG["model_dir"])
+    losses = load_losses(CONFIG["model_dir"])
+
+    # Apply cuts
+    data = apply_multiplicity_cut(data, CONFIG["min_multiplicity"])
+    pion_mask, kaon_mask = extract_event_masks(data)
+
+    print(f"Processing {len(data['reco_momentum'])} events")
+
+    # ====== Basic Plots ======
+    plot_loss_curves(losses, CONFIG["plot_dir"], CONFIG["plot_title"])
+
+    plot_momentum_distributions(
+        data["reco_momentum"],
+        {
+            "Pions": pion_mask,
+            "Kaons": kaon_mask,
+        },
+        CONFIG["plot_dir"],
+        CONFIG["plot_title"],
+    )
+
+    # ====== ROC Curve ======
+    y_true = np.concatenate(
+        [
+            np.zeros(np.sum(pion_mask)),  # Pions = 0
+            np.ones(np.sum(kaon_mask)),  # Kaons = 1
+        ]
+    )
+
+    y_scores = np.concatenate(
+        [
+            data["model_probs"][pion_mask, 1],
+            data["model_probs"][kaon_mask, 1],
+        ]
+    )
+    plot_roc_curve(y_true, y_scores, CONFIG["plot_dir"], CONFIG["plot_title"])
+
+    # ====== Multiplicity Distribution ======
+    multiplicity = ak.num(data["hits_x"], axis=1)
+    plot_multiplicity_distribution(
+        multiplicity, CONFIG["plot_dir"], CONFIG["plot_title"]
+    )
+
+    # ====== Efficiency vs Momentum ======
+    momentum_bins = CONFIG["momentum_bins"]
+    momentum_bin_centers = (momentum_bins[1:] + momentum_bins[:-1]) / 2
+    threshold = CONFIG["default_threshold"]
+
+    metrics = []
+    good_bins = []
+    pion_probs_per_bin = []
+    pion_masks_per_bin = []
+
+    for i in range(len(momentum_bins) - 1):
+        lower, upper = momentum_bins[i], momentum_bins[i + 1]
+        mom_mask = (data["reco_momentum"] >= lower) & (data["reco_momentum"] < upper)
+
+        # Store probability and mask data for probability plots
+        pion_probs_per_bin.append(data["model_probs"][mom_mask, 0])
+        pion_masks_per_bin.append(pion_mask[mom_mask])
+
+        result = calculate_bin_metrics(
+            data["model_probs"][mom_mask, 0],
+            pion_mask[mom_mask],
+            data["reco_pid"][mom_mask],
+            data["rich_pid"][mom_mask],
+            threshold,
+            CONFIG["pion_pid"],
+            CONFIG["kaon_pid"],
+        )
+
+        if result is None:
+            good_bins.append(False)
+        else:
+            good_bins.append(True)
+        metrics.append(result)
+
+    # ====== Probability Distribution Plots ======
+    plot_probability_distributions(
+        momentum_bins,
+        pion_probs_per_bin,
+        pion_masks_per_bin,
+        pion_mask,
+        kaon_mask,
+        CONFIG["plot_dir"],
+        CONFIG["plot_title"],
+    )
+
+    # ====== Threshold Efficiency Plots ======
+    plot_threshold_efficiency_comparison(
+        momentum_bins,
+        pion_probs_per_bin,
+        pion_masks_per_bin,
+        CONFIG["probability_thresholds"],
+        CONFIG["plot_dir"],
+        CONFIG["plot_title"],
+    )
+
+    plot_auc_vs_momentum(
+        momentum_bins,
+        pion_probs_per_bin,
+        pion_masks_per_bin,
+        CONFIG["plot_dir"],
+        CONFIG["plot_title"],
+    )
+
+    plot_auc_vs_multiplicity(
+        data,
+        pion_mask,
+        threshold,
+        CONFIG["plot_dir"],
+        CONFIG["plot_title"],
+    )
+
+    # ====== AUC 2D: Momentum vs Multiplicity ======
+    plot_auc_2d_momentum_multiplicity(
+        data,
+        pion_mask,
+        momentum_bins,
+        CONFIG["plot_dir"],
+        CONFIG["plot_title"],
+    )
+
+    # Plot efficiency curves
+    good_bins = np.array(good_bins, dtype=bool)
+    bin_widths = (momentum_bin_centers[1] - momentum_bin_centers[0]) / 2
+    xerr = np.ones(len(momentum_bin_centers)) * bin_widths
+
+    # Only plot for bins with valid data
+    valid_counts = np.sum(good_bins)
+    if valid_counts > 0:
+        plot_pion_efficiency(
+            momentum_bin_centers,
+            metrics,
+            xerr,
+            good_bins,
+            CONFIG["plot_dir"],
+            CONFIG["plot_title"],
+            threshold,
+        )
+        plot_kaon_efficiency(
+            momentum_bin_centers,
+            metrics,
+            xerr,
+            good_bins,
+            CONFIG["plot_dir"],
+            CONFIG["plot_title"],
+        )
+
+    # ====== Efficiency vs Multiplicity (1D) ======
+    print("\nCalculating efficiencies vs multiplicity...")
+    mult_bins = np.linspace(0, 100, 101)  # 10 bins
+
+    pion_pred_mask = data["model_probs"][:, 0] > threshold
+
+    eff_mult_data = calculate_efficiencies_1d(
+        multiplicity, mult_bins, pion_mask, pion_pred_mask
+    )
+
+    plot_efficiency_1d(
+        eff_mult_data["bin_centers"],
+        eff_mult_data["effs"],
+        eff_mult_data["errs"],
+        "RICH hit multiplicity",
+        threshold,
+        CONFIG["plot_dir"],
+        "efficiency_vs_multiplicity.png",
+        CONFIG["plot_title"],
+    )
+
+    # ====== Efficiency vs Momentum and Multiplicity (2D) ======
+    print("Calculating 2D efficiencies (momentum vs multiplicity)...")
+    eff_2d_data = calculate_efficiencies_2d(
+        data["reco_momentum"],
+        momentum_bins,
+        multiplicity,
+        mult_bins,
+        pion_mask,
+        pion_pred_mask,
+    )
+
+    plot_efficiency_2d(
+        eff_2d_data["bin_centers1"],
+        eff_2d_data["bin_centers2"],
+        eff_2d_data["effs_2d"],
+        "Momentum (GeV/c)",
+        "RICH hit multiplicity",
+        threshold,
+        CONFIG["plot_dir"],
+        "efficiency_2d_momentum_vs_multiplicity.png",
+        CONFIG["plot_title"],
+    )
+
+    # ====== 2D Histogram of Event Counts (Momentum vs Multiplicity) ======
+    print("Creating 2D histogram of event counts...")
+    plot_2d_histogram(
+        data["reco_momentum"],
+        momentum_bins,
+        multiplicity,
+        mult_bins,
+        "Momentum (GeV/c)",
+        "RICH hit multiplicity",
+        CONFIG["plot_dir"],
+        "histogram_2d_momentum_vs_multiplicity.png",
+        CONFIG["plot_title"],
+    )
+
+    # ====== Efficiency vs Theta (1D) ======
+    print("\nCalculating efficiencies vs theta...")
+    theta_bins = np.linspace(0, 40, 101)  # 25 bins from 0 to 25 degrees
+
+    eff_theta_data = calculate_efficiencies_1d(
+        data["theta"], theta_bins, pion_mask, pion_pred_mask
+    )
+
+    plot_efficiency_1d(
+        eff_theta_data["bin_centers"],
+        eff_theta_data["effs"],
+        eff_theta_data["errs"],
+        r"Polar angle $\theta$ (degrees)",
+        threshold,
+        CONFIG["plot_dir"],
+        "efficiency_vs_theta.png",
+        CONFIG["plot_title"],
+    )
+
+    figure = plt.figure()
+    plt.hist(data["theta"], bins=np.linspace(0, 40, 201), density=True)
+    plt.xlabel("Theta")
+    plt.ylabel("Normalized entries")
+    plt.savefig(CONFIG["plot_dir"] + "theta.png")
+    plt.close()
+
+    # ====== Efficiency vs Momentum and Theta (2D) ======
+    print("Calculating 2D efficiencies (momentum vs theta)...")
+    eff_2d_theta_data = calculate_efficiencies_2d(
+        data["reco_momentum"],
+        momentum_bins,
+        data["theta"],
+        theta_bins,
+        pion_mask,
+        pion_pred_mask,
+    )
+
+    plot_efficiency_2d(
+        eff_2d_theta_data["bin_centers1"],
+        eff_2d_theta_data["bin_centers2"],
+        eff_2d_theta_data["effs_2d"],
+        "Momentum (GeV/c)",
+        r"Polar angle $\theta$ (degrees)",
+        threshold,
+        CONFIG["plot_dir"],
+        "efficiency_2d_momentum_vs_theta.png",
+        CONFIG["plot_title"],
+    )
+
+    plot_2d_histogram(
+        data["reco_momentum"],
+        np.linspace(0, 12, 101),
+        data["theta"],
+        theta_bins,
+        "Momentum (GeV/c)",
+        "$\\theta$ (degrees)",
+        CONFIG["plot_dir"],
+        "histogram_2d_momentum_vs_theta.png",
+        CONFIG["plot_title"],
+    )
+    theta_bins = np.linspace(0, 40, 101)  # 25 bins from 0 to 25 degrees
+    plot_2d_histogram(
+        data["phi"],
+        np.linspace(140, 220, 201),
+        data["theta"],
+        theta_bins,
+        "$\phi$ (degrees)",
+        "$\\theta$ (degrees)",
+        CONFIG["plot_dir"],
+        "histogram_2d_phi_vs_theta.png",
+        CONFIG["plot_title"],
+    )
+    print("Calculating 2D efficiencies (theta vs phi)...")
+
+    eff_2d_theta_phi_data = calculate_efficiencies_2d(
+        data["phi"],
+        np.linspace(140, 220, 201),
+        data["theta"],
+        theta_bins,
+        pion_mask,
+        pion_pred_mask,
+    )
+
+    plot_efficiency_2d(
+        eff_2d_theta_phi_data["bin_centers1"],
+        eff_2d_theta_phi_data["bin_centers2"],
+        eff_2d_theta_phi_data["effs_2d"],
+        "$\Phi$ (deg)",
+        r"Polar angle $\theta$ (degrees)",
+        threshold,
+        CONFIG["plot_dir"],
+        "efficiency_2d_phi_vs_theta.png",
+        CONFIG["plot_title"],
+    )
+
+    from scipy.stats import binned_statistic_2d
+
+    print("Making cx, cy, cz plots")
+
+    # Make a 2D histogram where each bin contains the average data["traj_cx"]. Repeat for cy and cz
+    phi_bins = np.linspace(140, 220, 201)
+    theta_bins = np.linspace(0, 40, 101)
+
+    # Compute mean traj_cx in each (phi, theta) bin
+    stat_cx, phi_edges, theta_edges, binnumber = binned_statistic_2d(
+        np.array(data["phi"]),
+        np.array(data["theta"]),
+        np.array(data["traj_cx"]),
+        statistic="mean",
+        bins=[phi_bins, theta_bins],
+    )
+
+    fig, ax = plt.subplots(figsize=(12, 9))
+
+    # Mask NaNs so empty bins do not show up badly
+    stat_cx_masked = np.ma.masked_invalid(stat_cx)
+
+    im = ax.pcolormesh(
+        phi_edges,
+        theta_edges,
+        stat_cx_masked.T,
+        cmap="coolwarm",
+        shading="auto",
+    )
+
+    ax.set_xlabel(r"$\phi$ (degrees)", fontsize=12)
+    ax.set_ylabel(r"$\theta$ (degrees)", fontsize=12)
+    ax.set_title(f"{CONFIG['plot_title']}\nAverage trajectory $c_x$")
+
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label(r"Average cx", fontsize=12)
+
+    ax.grid(True, alpha=0.3, color="black", linestyle="--")
+
+    plt.tight_layout()
+    plt.savefig(
+        os.path.join(CONFIG["plot_dir"], "mean_traj_cx_phi_vs_theta.png"),
+        dpi=300,
+    )
+    plt.close()
+
+    stat_cy, phi_edges, theta_edges, binnumber = binned_statistic_2d(
+        np.array(data["phi"]),
+        np.array(data["theta"]),
+        np.array(data["traj_cy"]),
+        statistic="mean",
+        bins=[phi_bins, theta_bins],
+    )
+
+    fig, ax = plt.subplots(figsize=(12, 9))
+
+    # Mask NaNs so empty bins do not show up badly
+    stat_cy_masked = np.ma.masked_invalid(stat_cy)
+
+    im = ax.pcolormesh(
+        phi_edges,
+        theta_edges,
+        stat_cy_masked.T,
+        cmap="coolwarm",
+        shading="auto",
+    )
+
+    ax.set_xlabel(r"$\phi$ (degrees)", fontsize=12)
+    ax.set_ylabel(r"$\theta$ (degrees)", fontsize=12)
+    ax.set_title(f"{CONFIG['plot_title']}\nAverage trajectory $c_y$")
+
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label(r"Average cy", fontsize=12)
+
+    ax.grid(True, alpha=0.3, color="black", linestyle="--")
+
+    plt.tight_layout()
+    plt.savefig(
+        os.path.join(CONFIG["plot_dir"], "mean_traj_cy_phi_vs_theta.png"),
+        dpi=300,
+    )
+    plt.close()
+
+    print("✓ Analysis complete!")
+    print(f"✓ Plots saved to {CONFIG['plot_dir']}")
+
+    stat_cz, phi_edges, theta_edges, binnumber = binned_statistic_2d(
+        np.array(data["phi"]),
+        np.array(data["theta"]),
+        np.array(data["traj_cz"]),
+        statistic="mean",
+        bins=[phi_bins, theta_bins],
+    )
+
+    fig, ax = plt.subplots(figsize=(12, 9))
+
+    # Mask NaNs so empty bins do not show up badly
+    stat_cz_masked = np.ma.masked_invalid(stat_cz)
+
+    im = ax.pcolormesh(
+        phi_edges,
+        theta_edges,
+        stat_cz_masked.T,
+        cmap="coolwarm",
+        shading="auto",
+    )
+
+    ax.set_xlabel(r"$\phi$ (degrees)", fontsize=12)
+    ax.set_ylabel(r"$\theta$ (degrees)", fontsize=12)
+    ax.set_title(f"{CONFIG['plot_title']}\nAverage trajectory $c_z$")
+
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label(r"Average cz", fontsize=12)
+
+    ax.grid(True, alpha=0.3, color="black", linestyle="--")
+
+    plt.tight_layout()
+    plt.savefig(
+        os.path.join(CONFIG["plot_dir"], "mean_traj_cz_phi_vs_theta.png"),
+        dpi=300,
+    )
+    plt.close()
+
+    # Looking at cx, cy, cz distributions when phi > 190
+    phi = np.array(data["phi"])
+
+    masks = [
+        ("phi > 0", phi > 0, "phi_gt_0"),
+        ("phi > 190", phi > 190, "phi_gt_190"),
+    ]
+
+    variables = [
+        ("traj_cx", r"$c_x$"),
+        ("traj_cy", r"$c_y$"),
+        ("traj_cz", r"$c_z$"),
+    ]
+
+    for mask_label, mask, mask_tag in masks:
+        for key, label in variables:
+            vals = np.array(data[key])[mask]
+
+            fig, ax = plt.subplots(figsize=(10, 7))
+            ax.hist(vals, bins=50, histtype="step", linewidth=2)
+            ax.set_xlabel(label, fontsize=12)
+            ax.set_ylabel("Counts", fontsize=12)
+            ax.set_title(
+                f"{CONFIG['plot_title']}\nTrajectory {label} for ${mask_label}$"
+            )
+            ax.grid(True, alpha=0.3, color="black", linestyle="--")
 
             plt.tight_layout()
-            plt.savefig(plot_directory + f"RICH_hits_xy_event{j}_{mask_name}.png")
+            plt.savefig(
+                os.path.join(
+                    CONFIG["plot_dir"],
+                    f"{key}_{mask_tag}_hist.png",
+                ),
+                dpi=300,
+            )
             plt.close()
 
-        plt.figure()
-        plt.hist2d(np.array(reconstructed_momentum)[mask], np.array(cherenkov_angles)[mask], bins=100, range=((0,7), (-.05,.4)), norm=colors.LogNorm())
-        plt.colorbar()
-        plt.xlabel('p (GeV/c)')
-        plt.ylabel('$\\theta_{C}$ (rad)')
-        plt.title(plot_title+f"\n {title_dict[mask_name]}")
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
-        plt.savefig(plot_directory+f"cherenkov_angles_{mask_name}_3GeV.png")
-        plt.close()
 
-    kaon_pion_masks = [
-        (np.full_like(reconstructed_momentum, True, dtype=bool)),
-        (pion_events_mask) & (model_probabilities_for_pions > 0.8),
-        (pion_events_mask) & (model_probabilities_for_pions < 0.8),
-        (kaon_events_mask) & (model_probabilities_for_pions > 0.8),
-        (kaon_events_mask) & (model_probabilities_for_pions < 0.8),
-    ]
-    
-    for mask, mask_name in zip(kaon_pion_masks, mask_names):
-        plt.figure()
-        plt.hist2d(np.array(reconstructed_momentum)[mask], np.array(cherenkov_angles)[mask], bins=100, range=((0,7), (-.05,.4)), norm=colors.LogNorm())
-        plt.colorbar()
-        plt.xlabel('p (GeV/c)')
-        plt.ylabel('$\\theta_{C}$ (rad)')
-        plt.title(plot_title+f"\n {title_dict[mask_name]}")
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
-        plt.savefig(plot_directory+f"cherenkov_angles_{mask_name}.png")
-        plt.close()
+if __name__ == "__main__":
+    main()
