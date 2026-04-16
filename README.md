@@ -1,6 +1,6 @@
 # CLAS_RICH_ML
 
-Machine-learning-based particle identification (PID) workflow for the CLAS12 RICH detector at Jefferson Lab.
+Machine-learning-based particle identification (PID) workflow for the CLAS12 RICH detector at Jefferson Lab. Contact rmilt003@ucr.edu for questions.
 
 This repository contains the **post-simulation ML pipeline**:
 1. Convert simulated `.hipo` files to `.root`
@@ -25,6 +25,11 @@ The main files in that directory are:
 - `submit_rich_job.sh`: batch submission helper for generating/simulating jobs.
 
 After generation/reconstruction, you should have CLAS12 output in `.hipo` format.
+
+Some notes on generation:
+The script I used to submit jobs is submit_rich_jobs.sh. You'll need to adjust all of the directories in that file so you're not using mine.
+
+That script assumes you already have lund files generated. I generate lund files with lund_generator.cpp. Please change the output directory on [line 98](https://github.com/rymilton/CLAS_RICH_ML/blob/main/data_generation/lund_generator.cpp#L98). You just run this script using `root lund_generator.cpp`. Lastly, you'll need to change [the schema path in the reconstruction yaml file](https://github.com/rymilton/CLAS_RICH_ML/blob/main/data_generation/rga_spring2018.yaml#L76).
 
 ---
 
